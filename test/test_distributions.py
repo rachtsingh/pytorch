@@ -9,8 +9,9 @@ class TestDistributions(TestCase):
     def _gradcheck_log_prob(self, dist_ctor, ctor_params):
         # performs gradient checks on log_prob
         distribution = dist_ctor(*ctor_params)
-        s = distribution.sample()
-
+        s = distribution.sample().detach()
+        # now that sample() creates a graph, we need to set samples as 
+        # volatile for this test to pass
         self.assertEqual(s.size(), distribution.log_prob(s).size())
 
         def apply_fn(*params):
@@ -28,8 +29,8 @@ class TestDistributions(TestCase):
     def test_bernoulli(self):
         p = Variable(torch.Tensor([0.7, 0.2, 0.4]), requires_grad=True)
         r = Variable(torch.Tensor([0.3]), requires_grad=True)
-        self.assertEqual(Bernoulli(p).sample_n(8).size(), (8, 3))
-        self.assertEqual(Bernoulli(r).sample_n(8).size(), (8, 1))
+        self.assertEqual(Bernoulli(p).sample(8).size(), (8, 3))
+        self.assertEqual(Bernoulli(r).sample(8).size(), (8, 1))
         self.assertEqual(Bernoulli(r).sample().size(), (1,))
         self._gradcheck_log_prob(Bernoulli, (p,))
 
@@ -42,20 +43,20 @@ class TestDistributions(TestCase):
     def test_bernoulli_3d(self):
         p = Variable(torch.Tensor(2, 3, 5).fill_(0.5), requires_grad=True)
         self.assertEqual(Bernoulli(p).sample().size(), (2, 3, 5))
-        self.assertEqual(Bernoulli(p).sample_n(2).size(), (2, 2, 3, 5))
+        self.assertEqual(Bernoulli(p).sample(2).size(), (2, 2, 3, 5))
 
     def test_multinomial_1d(self):
         p = Variable(torch.Tensor([0.1, 0.2, 0.3]), requires_grad=True)
         # TODO: this should return a 0-dim tensor once we have Scalar support
         self.assertEqual(Multinomial(p).sample().size(), (1,))
-        self.assertEqual(Multinomial(p).sample_n(1).size(), (1, 1))
+        self.assertEqual(Multinomial(p).sample(1).size(), (1, 1))
         self._gradcheck_log_prob(Multinomial, (p,))
 
     def test_multinomial_2d(self):
         probabilities = [[0.1, 0.2, 0.3], [0.5, 0.3, 0.2]]
         p = Variable(torch.Tensor(probabilities), requires_grad=True)
         self.assertEqual(Multinomial(p).sample().size(), (2,))
-        self.assertEqual(Multinomial(p).sample_n(6).size(), (6, 2))
+        self.assertEqual(Multinomial(p).sample(6).size(), (6, 2))
         self._gradcheck_log_prob(Multinomial, (p,))
 
         def ref_log_prob(idx, val, log_prob):
@@ -70,11 +71,11 @@ class TestDistributions(TestCase):
         mean_1d = Variable(torch.randn(1), requires_grad=True)
         std_1d = Variable(torch.randn(1), requires_grad=True)
         self.assertEqual(Normal(mean, std).sample().size(), (5, 5))
-        self.assertEqual(Normal(mean, std).sample_n(7).size(), (7, 5, 5))
-        self.assertEqual(Normal(mean_1d, std_1d).sample_n(1).size(), (1, 1))
+        self.assertEqual(Normal(mean, std).sample(7).size(), (7, 5, 5))
+        self.assertEqual(Normal(mean_1d, std_1d).sample(1).size(), (1, 1))
         self.assertEqual(Normal(mean_1d, std_1d).sample().size(), (1,))
-        self.assertEqual(Normal(0.2, .6).sample_n(1).size(), (1, 1))
-        self.assertEqual(Normal(-0.7, 50.0).sample_n(1).size(), (1, 1))
+        self.assertEqual(Normal(0.2, .6).sample(7).size(), (7, 1))
+        self.assertEqual(Normal(-0.7, 50.0).sample(1).size(), (1, 1))
 
         self._gradcheck_log_prob(Normal, (mean, std))
         self._gradcheck_log_prob(Normal, (mean, 1.0))
