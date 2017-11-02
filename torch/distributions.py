@@ -17,29 +17,26 @@ Example::
 import math
 from numbers import Number
 import torch
-
+from torch.autograd import Variable
 
 __all__ = ['Distribution', 'Bernoulli', 'Multinomial', 'Normal']
 
+
+def expanded_size(expand_size, orig_size):
+    """Returns the expanded size given two sizes"""
+    # strip leading 1s from original size
+    if not expand_size:
+        return orig_size
+    # favor Normal(mean_1d, std_1d).sample(k).size()= (k, 1) instead of (k,) 
+    #if orig_size == (1,):
+    #    return expand_size
+    else:
+        return expand_size + orig_size
 
 class Distribution(object):
     r"""
     Distribution is the abstract base class for probability distributions.
     """
-
-    def sample(self):
-        """
-        Generates a single sample or single batch of samples if the distribution
-        parameters are batched.
-        """
-        raise NotImplementedError
-
-    def sample_n(self, n):
-        """
-        Generates n samples or n batches of samples if the distribution parameters
-        are batched.
-        """
-        raise NotImplementedError
 
     def log_prob(self, value):
         """
@@ -51,7 +48,49 @@ class Distribution(object):
         """
         raise NotImplementedError
 
+    def __init__(self, event_size, data_type):
+        self._size = event_size
+        self._type = data_type
 
+    @property
+    def type(self):
+        return self._type
+
+    @property
+    def event_size(self):
+        return self._size
+
+    def sample(self, *sizes):
+        """
+        Generates a single sample or single batch of samples if the distribution
+        parameters are batched.
+        """
+        raise NotImplementedError
+
+    def prob(self, value):
+        return torch.exp(self.log_prob(value))
+
+    def log_cdf(self, value):
+        return torch.log(self.cdf(value))
+
+    def cdf(self, value):
+        raise NotImplementedError
+
+    def inv_cdf(self, value):
+        raise NotImplementedError
+
+    def mean(self):
+        raise NotImplementedError
+
+    def variance(self):
+        raise NotImplementedError
+
+    def covariance(self):
+        raise NotImplementedError
+
+    def mode(self):
+        raise NotImplementedError
+        
 class Bernoulli(Distribution):
     r"""
     Creates a Bernoulli distribution parameterized by `probs`.
@@ -72,12 +111,15 @@ class Bernoulli(Distribution):
 
     def __init__(self, probs):
         self.probs = probs
+        if isinstance(probs, Number):
+            super(Bernoulli, self).__init__((1,),
+                                          'torch.FloatTensor')
+        else:
+            super(Bernoulli, self).__init__(probs.size(),
+                                          probs.data.type())
 
-    def sample(self):
-        return torch.bernoulli(self.probs)
-
-    def sample_n(self, n):
-        return torch.bernoulli(self.probs.expand(n, *self.probs.size()))
+    def sample(self, *sizes):
+        return torch.bernoulli(self.probs.expand(*sizes, *self.probs.size()))
 
     def log_prob(self, value):
         # compute the log probabilities for 0 and 1
@@ -112,64 +154,110 @@ class Multinomial(Distribution):
     """
 
     def __init__(self, probs):
-        if probs.dim() != 1 and probs.dim() != 2:
-            # TODO: treat higher dimensions as part of the batch
-            raise ValueError("probs must be 1D or 2D")
         self.probs = probs
+        if isinstance(probs, Number):
+            super(Multinomial, self).__init__((1,),
+                                          'torch.FloatTensor')
+        else:
+            super(Multinomial, self).__init__(probs.size(),
+                                          probs.data.type())
 
     def sample(self):
         return torch.multinomial(self.probs, 1, True).squeeze(-1)
-
+    
     def sample_n(self, n):
         if n == 1:
             return self.sample().expand(1, 1)
         else:
             return torch.multinomial(self.probs, n, True).t()
-
+        
     def log_prob(self, value):
-        p = self.probs / self.probs.sum(-1, keepdim=True)
-        if value.dim() == 1 and self.probs.dim() == 1:
-            # special handling until we have 0-dim tensor support
-            return p.gather(-1, value).log()
-
-        return p.gather(-1, value.unsqueeze(-1)).squeeze(-1).log()
-
+        """Returns the probability mass, which is the probability of the argmax
+        of the value under the corresponding Discrete distribution."""
+        if value.data.type() != 'torch.LongTensor':
+            _, value = value.max(-1)
+        if value.dim() < len(self._size[:-1]):
+            value = value.expand(*self._size[:-1])
+        log_probs = self.probs.log()
+        if value.dim() > len(self._size[:-1]):
+            size = value.size() + (self._size[-1],)
+            log_probs = self._log_probs.expand(*size)
+        return log_probs.gather(-1, value.unsqueeze(-1)).squeeze(-1)
 
 class Normal(Distribution):
-    r"""
-    Creates a normal (also called Gaussian) distribution parameterized by
-    `mean` and `std`.
+    r"""The univariate normal distribution.
 
-    Example::
+    .. math::
+       f(x \mid \mu, \sigma) =
+           \sqrt{\frac{1}{2\pi \sigma^2}}
+           \exp \left[ -\frac{1}{2} \frac{(x-\mu)^2}{\sigma^2} \right]
 
-        >>> m = Normal(torch.Tensor([0.0]), torch.Tensor([1.0]))
-        >>> m.sample()  # normally distributed with mean=0 and stddev=1
-         0.1046
-        [torch.FloatTensor of size 1]
+    ========  ==========================================
+    Support   :math:`x \in \mathbb{R}`
+    Mean      :math:`\mu`
+    Variance  :math:`\sigma^2` or :math:`\frac{1}{\tau}`
+    ========  ==========================================
 
-    Args:
-        mean (float or Tensor or Variable): mean of the distribution
-        std (float or Tensor or Variable): standard deviation of the distribution
+    Normal distribution can be parameterized either in terms of standard
+    deviation or precision. The link between the two parametrizations is
+    given by :math:`\tau = 1 / \sigma^2`
+
+    Parameters:
+        mu(:obj:`Variable`): Mean.
+        sigma(:obj:`Variable`, optional): Standard deviation (sigma > 0).
+        tau(:obj:`Variable`, optional): Precision (tau > 0).
+        size(tuple, optional): Sample size.
+
+    Attributes:
+        mean(:obj:`Variable`): Mean (mu).
+        mode(:obj:`Variable`): Mode (mu).
+        variance(:obj:`Variable`): Variance (equal to sigma**2 or 1/tau)
+
+    Note:
+        Only one of sigma or tau can be specified. When neither is specified,
+        the default is sigma = tau = 1.0
     """
 
-    def __init__(self, mean, std):
-        self.mean = mean
-        self.std = std
+    def __init__(self, mu, sigma=None, tau=None):
+        if sigma is not None and tau is not None:
+            raise ValueError("Either sigma or tau may be specified, not both.")
+        if sigma is None and tau is None:
+            sigma = 1.0
+            tau = 1.0
+        if tau is None:
+            tau = sigma**-2
+        if sigma is None:
+            sigma = tau**-0.5
+        self._mu = mu
+        self._sigma = sigma
+        self._tau = tau
+        _mu0 = mu / sigma
+        if isinstance(_mu0, Number):
+            super(Normal, self).__init__((1,),
+                                         'torch.FloatTensor')
+        else:
+            super(Normal, self).__init__(_mu0.size(),
+                                         _mu0.data.type())
 
-    def sample(self):
-        return torch.normal(self.mean, self.std)
+    def mean(self):
+        return self._mu
 
-    def sample_n(self, n):
-        # cleanly expand float or Tensor or Variable parameters
-        def expand(v):
-            if isinstance(v, Number):
-                return torch.Tensor([v]).expand(n, 1)
-            else:
-                return v.expand(n, *v.size())
-        return torch.normal(expand(self.mean), expand(self.std))
+    def mode(self):
+        return self._mu
+
+    def variance(self):
+        return self._sigma**2
+
+    def sample(self, *sizes):
+        size = expanded_size(sizes, self._size)
+        eps = Variable(torch.randn(*size).type(self._type))
+        return self._mu + self._sigma * eps
 
     def log_prob(self, value):
-        # compute the variance
-        var = (self.std ** 2)
-        log_std = math.log(self.std) if isinstance(self.std, Number) else self.std.log()
-        return -((value - self.mean) ** 2) / (2 * var) - log_std - math.log(math.sqrt(2 * math.pi))
+        # TODO: hopefully this goes away soon
+        log = math.log if isinstance(self._sigma, Number) else torch.log
+        return -0.5 * (log(2 * math.pi * self._sigma**2) +
+                       ((value - self._mu) / self._sigma)**2)
+        #var = (self._sigma ** 2)
+        #log_std = math.log(self._sigma) if isinstance(self._sigma, Number) else self._sigma.log()
+        #return -((value - self._mu) ** 2) / (2 * var) - log_std - math.log(math.sqrt(2 * math.pi))
