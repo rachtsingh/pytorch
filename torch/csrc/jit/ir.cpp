@@ -34,22 +34,29 @@ std::string getPythonName(const PyObject* obj, bool is_legacy) {
     return THPUtils_unpackString(name.get());
   }
 }
-void printNodeRef(std::ostream & out, Node * n) {
+void printValueRef(std::ostream & out, const Value * n) {
   out << "%" << n->uniqueName();
 }
 
-std::ostream& operator<<(std::ostream & out, const node_list & nodes) {
+template <typename T>
+std::ostream& operator<<(std::ostream & out, const std::vector<T> & nodes) {
+  out << at::ArrayRef<T>{nodes};
+  return out;
+}
+
+template <typename T>
+std::ostream& operator<<(std::ostream & out, const at::ArrayRef<T> & nodes) {
   size_t i = 0;
   for(auto n : nodes) {
     if(i++ > 0)
       out << ", ";
-    printNodeRef(out, n);
+    printValueRef(out, n);
   }
   return out;
 }
-
-static std::ostream& operator<<(std::ostream & out, THPObjectPtr& obj) {
-  auto pyobj = py::handle(obj.get());
+std::ostream& printPyObject(std::ostream & out, const THPObjectPtr& obj) {
+  AutoGIL gil;
+  auto pyobj = py::handle(const_cast<PyObject*>(obj.get()));
   if (py::isinstance<py::tuple>(pyobj)) {
     // This special-case for printing tuples handles a problem where
     // str((2L, 3L)) outputs "(2L, 3L)" in Python 2 but "(2, 3)"
@@ -82,39 +89,28 @@ static std::ostream& operator<<(std::ostream & out, THPObjectPtr& obj) {
     out << ")";
     return out;
   } else {
-    THPObjectPtr str { PyObject_Str(obj.get()) };
-    return out << THPUtils_unpackString(str.get());
+    return out << THPUtils_unpackString(py::str(pyobj).ptr());
   }
 }
 
-std::string PythonOp::name() {
+std::string PythonOp::name() const {
   return getPythonName(pyobj.get(),is_legacy);
 }
 
-std::string CppOp::name() {
+std::string CppOp::name() const {
   return fn->name();
 }
 
-static void emitUses(std::ostream & out, Node * n) {
-  size_t i = 0;
-  for(auto u : n->uses()) {
-    if(i++ > 0)
-      out << ", ";
-    printNodeRef(out, u.user);
-    out << ".i" << u.offset;
-  }
-}
-
-struct node_list_with_types {
-  const node_list& nodes;
+struct const_value_list_with_types {
+  const std::vector<const Value*>& values;
   bool use_newlines;
-  node_list_with_types(const node_list& nodes, bool use_newlines = false)
-    : nodes(nodes), use_newlines(use_newlines) {}
+  const_value_list_with_types(const std::vector<const Value*>& values, bool use_newlines = false)
+    : values(values), use_newlines(use_newlines) {}
 };
-std::ostream& operator<<(std::ostream & out, node_list_with_types l) {
+std::ostream& operator<<(std::ostream & out, const_value_list_with_types l) {
   size_t i = 0;
   size_t prev_stage = 0;
-  for(auto n : l.nodes) {
+  for(auto n : l.values) {
     if(i++ > 0) {
       if (l.use_newlines) {
         // TODO: Indent here is hard-coded for "graph(": un-hard-code it
@@ -127,7 +123,7 @@ std::ostream& operator<<(std::ostream & out, node_list_with_types l) {
         out << ", ";
       }
     }
-    printNodeRef(out, n);
+    printValueRef(out, n);
     out << " : ";
     if(n->hasType())
       out << *n->type();
@@ -147,7 +143,7 @@ void printPrimList(std::ostream & out, const std::vector<T> & items) {
   }
   out << "]";
 }
-void printAttributes(std::ostream & out, Node * n) {
+void printAttributes(std::ostream & out, const Node * n) {
   out << "[";
   auto names = n->attributeNames();
   int i = 0;
@@ -214,18 +210,18 @@ void printAttributes(std::ostream & out, Node * n) {
   out << "]";
 }
 
-std::ostream& printNode(std::ostream & out, Node * n, std::vector<Node*> * groups) {
-  node_list outputs = n->outputs();
-  out << node_list_with_types(outputs);
+std::ostream& printNode(std::ostream & out, const Node * n, std::vector<const Node*> * groups) {
+  auto outputs = n->outputs();
+  out << const_value_list_with_types(outputs);
   out << " = ";
-  IR_IFM(n,PythonOp)
+  IR_IFM_CONST(n,PythonOp)
     out << "^" << value->name();
     out << "(";
     int i = 0;
     for (auto& scalar : value->scalar_args) {
       if (i++ > 0)
         out << ", ";
-      out << scalar;
+      printPyObject(out, scalar);
     }
     out << ")";
   IR_ELSEIF(FusionGroup)
@@ -235,7 +231,7 @@ std::ostream& printNode(std::ostream & out, Node * n, std::vector<Node*> * group
     } else {
       out << "fusion_group[" << *n->g(kSubgraph) << "]";
     }
-  IR_ELSEIFM(CppOp)
+  IR_ELSEIFM_CONST(CppOp)
     out << "CppOp[" << value->name() << "]";
   IR_ELSE()
     out << symbolToString(n->kind());
@@ -243,40 +239,25 @@ std::ostream& printNode(std::ostream & out, Node * n, std::vector<Node*> * group
       printAttributes(out,n);
     }
   IR_END()
-  out << "(" << n->inputs() << "), uses = [";
-  if(n->hasMultipleOutputs()) {
-    size_t i = 0;
-    for(auto u : n->uses()) {
-      if(i++ > 0)
-        out << ", ";
-      out << "[";
-      emitUses(out,u.user);
-      out << "]";
-    }
-  } else {
-    emitUses(out,n);
-  }
-  out << "];\n";
+  out << "(" << n->inputs() << ")\n";
   return out;
 }
 
-std::ostream& operator<<(std::ostream & out, Node & n) {
+std::ostream& operator<<(std::ostream & out, const Node & n) {
   return printNode(out, &n, nullptr);
 }
 
-std::ostream& operator<<(std::ostream & out, Graph & g) {
-  out << "graph(" << node_list_with_types(g.inputs(), true) << ") {\n";
-  std::vector<Node*> groups;
+std::ostream& operator<<(std::ostream & out, const Graph & g) {
+  out << "graph(" << const_value_list_with_types(g.inputs(), true) << ") {\n";
+  std::vector<const Node*> groups;
   size_t prev_stage = 0;
   for(auto n : g.nodes()) {
-    if(n->kind() != kSelect) { //improve readibility by printing selects inline
-      if (n->stage() != prev_stage) {
-        out << "  ---------------- stage " << n->stage() << " ----------------\n";
-        prev_stage = n->stage();
-      }
-      out << "  ";
-      printNode(out, n, &groups);
+    if (n->stage() != prev_stage) {
+      out << "  ---------------- stage " << n->stage() << " ----------------\n";
+      prev_stage = n->stage();
     }
+    out << "  ";
+    printNode(out, n, &groups);
   }
   out << "  return (" << g.outputs() << ");\n}\n";
   size_t i = 0;
@@ -325,11 +306,6 @@ void Node::lint() const {
       JIT_ASSERT(std::find(ALL_OF(input->uses_), Use(const_cast<Node*>(this), i)) != input->uses_.end());
       JIT_ASSERT(stage_ >= input->stage_);
       JIT_ASSERT(graph_->all_nodes.count(this) == 1);
-      if (kind_ == kSelect) {
-        JIT_ASSERT(input->hasType() && input->type()->kind() == TypeKind::MultiType);
-      } else {
-        JIT_ASSERT(!input->hasType() || input->type()->kind() != TypeKind::MultiType);
-      }
       // Handle invariant
       if (i != inputs_.size() - 1) {
         JIT_ASSERT(!input->hasType() || input->type()->kind() != TypeKind::HandleType);
@@ -338,26 +314,13 @@ void Node::lint() const {
     }
   }
 
-  {
+  for(auto o : outputs()) {
     size_t i = 0;
-    for (auto use : uses_) {
+    for (auto use : o->uses()) {
       // Use invariants
       // - Use is consistent with inputs
       // - Every user node is live (checked in Graph)
-      JIT_ASSERT(use.user->inputs_[use.offset] == this);
-      // Select invariant
-      // - Multi-return nodes only have select uses
-      // - uses = [Select 0, Select 1, Select 2, ...]
-      if (type_ && type_->kind() == TypeKind::MultiType) {
-        JIT_ASSERT(use.offset == 0);
-        IR_IF(use.user, Select)
-          JIT_ASSERT(value->offset() == i);
-        IR_ELSE()
-          JIT_ASSERT(0);
-        IR_END()
-      } else {
-        JIT_ASSERT(use.user->kind() != kSelect);
-      }
+      JIT_ASSERT(use.user->inputs_[use.offset] == o);
       i++;
     }
   }
@@ -371,11 +334,9 @@ void Node::lint() const {
   IR_IF(this,Constant)
     JIT_ASSERT(inputs_.size() == 0);
   IR_ELSEIF(Return)
-    JIT_ASSERT(uses_.size() == 0);
+    JIT_ASSERT(outputs().size() == 0);
   IR_ELSEIF(Param)
     JIT_ASSERT(inputs_.size() == 0);
-  IR_ELSEIF(Select)
-    JIT_ASSERT(inputs_.size() == 1);
   IR_ELSEIFM_CONST(PythonOp)
     std::size_t n_scalars = 0, n_tensors = 0;
     for (auto c : value->cconv) {
@@ -418,40 +379,45 @@ void Graph::lint() const {
   // - uniques in all_nodes are unique
   // - every use will occur later in the topsort
 
-  std::unordered_set<const Node*> in_scope;
+  std::unordered_set<const Value*> in_scope;
+  std::unordered_set<const Node*> node_in_scope;
   std::unordered_set<size_t> seen_uniques;
   std::unordered_map<const Node*, int64_t> anticipated_uses;
+  auto check_value = [&](const Value* v) {
+    auto b = in_scope.insert(v);
+    JIT_ASSERT(b.second);  // insertion took place
+    auto b2 = seen_uniques.insert(v->unique());
+    JIT_ASSERT(b2.second);  // insertion took place
+    JIT_ASSERT(v->unique() < next_unique_);
+
+    for (auto use : v->uses()) {
+      JIT_ASSERT(node_in_scope.count(use.user) == 0);
+      JIT_ASSERT(all_nodes.count(use.user) == 1);
+      anticipated_uses[use.user]++;  // int default constructs to 0
+    }
+  };
   auto check_node = [&](const Node* n) {
     for (auto input : n->inputs_) {
       if (in_scope.count(input) != 1) {
-        if (n->kind_ == kSelect) {
-          JIT_ASSERTM(0, "%%%d (select node) not in scope; you probably forget to append it to the graph (you won't see this in the graph rendering)", input->unique_);
-        } else {
-          JIT_ASSERTM(0, "%%%d not in scope", input->unique_);
-        }
+        JIT_ASSERTM(0, "%%%d not in scope", input->unique());
       }
     }
     JIT_ASSERT(anticipated_uses[n] == static_cast<int64_t>(n->inputs_.size()));
     anticipated_uses[n] = -1;  // we saw the anticipated user!
-
-    auto b = in_scope.insert(n);
-    JIT_ASSERT(b.second);  // insertion took place
-    auto b2 = seen_uniques.insert(n->unique_);
-    JIT_ASSERT(b2.second);  // insertion took place
-    JIT_ASSERT(n->unique_ < next_unique_);
-
-    for (auto use : n->uses_) {
-      JIT_ASSERT(in_scope.count(use.user) == 0);
-      JIT_ASSERT(all_nodes.count(use.user) == 1);
-      anticipated_uses[use.user]++;  // int default constructs to 0
+    auto node_inserted = node_in_scope.insert(n);
+    JIT_ASSERT(node_inserted.second);  // insertion took place
+    size_t i = 0;
+    for(auto o : n->outputs()) {
+      JIT_ASSERT(o->node() == n);
+      JIT_ASSERT(i++ == o->offset_);
+      check_value(o);
     }
-
     n->lint();
   };
 
-  for (auto input : inputs_) {
-    JIT_ASSERT(input->kind_ == kParam);
-    check_node(input);
+  for (auto input : inputs()) {
+    check_value(input);
+    JIT_ASSERT(input->node()->kind_ == kParam);
   }
 
   for (auto n : nodes()) {
@@ -475,7 +441,7 @@ void Graph::lint() const {
 
   node_set all_nodes_set(ALL_OF(all_nodes)); // NB: all_nodes is *unordered*
   node_set nodes_set(ALL_OF(nodes()));
-  node_set inputs_set(ALL_OF(inputs_));
+  node_set inputs_set {input_};
   node_set output_set{output_};
   // TODO: Make a more type safe std::includes wrapper which disallows use on
   // non-ordered containers
@@ -490,14 +456,14 @@ void Graph::lint() const {
   JIT_ASSERT(std::includes(ALL_OF(sum_set), ALL_OF(all_nodes_set)));
 
   // graph->stage() should be equal to max(node.stage for node in graph->nodes())
-  if (nodes().begin() == nodes().end()) {
+  if (begin() == end()) {
     JIT_ASSERT(stage() == 0);
   } else {
-    JIT_ASSERT(stage() == nodes().rbegin()->stage());
+    JIT_ASSERT(stage() == rbegin()->stage());
   }
 }
 
-void Graph::dump() {
+void Graph::dump() const {
   std::cout << *this << "\n";
 }
 

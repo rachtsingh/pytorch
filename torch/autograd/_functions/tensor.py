@@ -127,26 +127,6 @@ class SetItem(InplaceFunction):
         return grad_input, None, grad_value
 
 
-# TODO: how to do NoGrad in new style
-class NoGrad(Function):
-
-    def forward(self, i):
-        result = i.new(i)
-        self.mark_non_differentiable(result)
-        self.mark_shared_storage((i, result))
-        return result
-
-    def backward(self, grad_output):
-        assert False, "backward of NoGrad should never be called"
-
-    def _do_forward(self, *args, **kwargs):
-        result = super(NoGrad, self)._do_forward(*args, **kwargs)
-        self.requires_grad = False
-        return result
-
-    __call__ = _do_forward
-
-
 class Expand(Function):
 
     @staticmethod
@@ -208,28 +188,6 @@ class CudaTransfer(Function):
             return grad_output, None, None
         else:
             return grad_output.cpu(), None, None
-
-
-class Permute(Function):
-
-    @staticmethod
-    def symbolic(g, input, dim_indices):
-        if dim_indices == list(range(0, len(dim_indices))):
-            return input
-        return g.op("Transpose", input, perm_i=dim_indices)
-
-    @staticmethod
-    def forward(ctx, input, dim_indices):
-        ctx.rev_dim_indices = [None for _ in range(len(dim_indices))]
-        for i, dim_idx in enumerate(dim_indices):
-            ctx.rev_dim_indices[dim_idx] = i
-        result = input.permute(*dim_indices)
-        ctx.mark_shared_storage((input, result))
-        return result
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        return grad_output.permute(*ctx.rev_dim_indices), None
 
 
 class IndexAdd(InplaceFunction):

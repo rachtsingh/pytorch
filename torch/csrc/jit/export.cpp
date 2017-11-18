@@ -21,7 +21,7 @@ namespace torch { namespace jit {
 
 namespace {
 
-std::string node_name(Node* n) {
+std::string value_name(Value* n) {
   return n->uniqueName();
 }
 
@@ -65,7 +65,7 @@ void encodeTensor(onnx::TensorProto * p, const at::Tensor & tensor) {
       at_type = at::kLong;
       break;
     default:
-      jit::barf("unexpected tensor scalar type");
+      torch::barf("unexpected tensor scalar type");
       break;
   }
   p->set_data_type(onnx_type);
@@ -79,40 +79,50 @@ void addAttribute(onnx::NodeProto * n_p, jit::Node * n, jit::Symbol name) {
   switch(n->kindOf(name)) {
     case AttributeKind::f:
       attr->set_f(n->f(name));
+      attr->set_type(onnx::aFLOAT);
       break;
     case AttributeKind::fs:
+      attr->set_type(onnx::aFLOATS);
       for(auto & v : n->fs(name))
         attr->add_floats(v);
       break;
     case AttributeKind::i:
+      attr->set_type(onnx::aINT);
       attr->set_i(n->i(name));
       break;
     case AttributeKind::is:
+      attr->set_type(onnx::aINTS);
       for(auto & v : n->is(name))
         attr->add_ints(v);
       break;
     case AttributeKind::s:
+      attr->set_type(onnx::aSTRING);
       attr->set_s(n->s(name));
       break;
     case AttributeKind::ss:
+      attr->set_type(onnx::aSTRINGS);
       for(auto & v : n->ss(name))
         attr->add_strings(v);
       break;
     case AttributeKind::t: {
+      attr->set_type(onnx::aTENSOR);
       auto t = attr->mutable_t();
       encodeTensor(t, n->t(name));
     } break;
     case AttributeKind::ts:
+      attr->set_type(onnx::aTENSORS);
       for(auto & v : n->ts(name)) {
         auto t = attr->add_tensors();
         encodeTensor(t, v);
       }
       break;
     case AttributeKind::g: {
+      attr->set_type(onnx::aGRAPH);
       auto g = attr->mutable_g();
       encodeGraph(g, n->g(name), {});
     } break;
     case AttributeKind::gs:
+      attr->set_type(onnx::aGRAPHS);
       for(auto & v : n->gs(name)) {
         auto g = attr->add_graphs();
         encodeGraph(g, v, {});
@@ -121,7 +131,7 @@ void addAttribute(onnx::NodeProto * n_p, jit::Node * n, jit::Symbol name) {
   }
 }
 
-void encodeTypeProtoTensorType(onnx::TypeProtoTensorTypeProto* tensor_type, Node* n) {
+void encodeTypeProtoTensorType(onnx::TypeProtoTensorTypeProto* tensor_type, Value* n) {
   onnx::TypeProtoTensorShapeProto* shape = tensor_type->mutable_shape();
   JIT_ASSERT(n->hasType());
   TensorType* node_type = n->type()->expect<TensorType>();
@@ -154,14 +164,14 @@ void encodeTypeProtoTensorType(onnx::TypeProtoTensorTypeProto* tensor_type, Node
       onnx_type = onnx::kINT64;
       break;
     default:
-      jit::barf("unexpected tensor scalar type");
+      torch::barf("unexpected tensor scalar type");
       break;
   }
   tensor_type->set_data_type(onnx_type);
 }
 
-void encodeValueInfo(onnx::ValueInfoProto* v, Node* n) {
-  v->set_name(node_name(n));
+void encodeValueInfo(onnx::ValueInfoProto* v, Value* n) {
+  v->set_name(value_name(n));
   onnx::TypeProto* t = v->mutable_type();
   onnx::TypeProtoTensorTypeProto* tensor_type = t->mutable_tensor_type();
   encodeTypeProtoTensorType(tensor_type, n);
@@ -180,22 +190,20 @@ void encodeGraph(onnx::GraphProto * p_g, const std::shared_ptr<Graph> & g, const
     encodeValueInfo(v, output);
   }
   for (auto node : g->nodes()) {
-    if (node->kind() == kSelect) {
-      // No select nodes in ONNX: instead we make use
-      // of the select invariant
-      continue;
-    }
-    if (node->kind() == kUndefined && node->uses().empty()) {
+    if (node->kind() == kUndefined && !node->hasUses()) {
       // Undefined nodes never show up in ONNX; they're just a tool
       // to help symbolics do the right thing.
       continue;
     }
     auto p_n = p_g->add_node();
+    if (node->getSourceLocation()) {
+      p_n->set_doc_string(node->getSourceLocation()->python_traceback);
+    }
     for(auto input : node->inputs()) {
-      p_n->add_input(node_name(input));
+      p_n->add_input(value_name(input));
     }
     for(auto output : node->outputs()) {
-      p_n->add_output(node_name(output));
+      p_n->add_output(value_name(output));
     }
     p_n->set_op_type(symbolToString(node->kind()));
     for(auto attr_name : node->attributeNames()) {
@@ -220,89 +228,8 @@ void encodeModel(onnx::ModelProto* p_m, const std::shared_ptr<Graph>& g,
   encodeGraph(p_g, g, initializers);
 }
 
-// Broadcasting operators have the following property:
-// They support a 'broadcast' flag, which enables broadcasting
-// on the last argument.  ATM this is not full-Numpy broadcasting,
-// only left-size extension (no size 1 to size n broadcast)
-std::unordered_set<NodeKind> broadcasting = {
-  kAdd,
-  kDiv,
-  kMul,
-  kPow,
-  kSub,
-  kGemm,
-};
-
-bool isBroadcasting(Node *node) {
-  return broadcasting.count(node->kind());
-}
-
-// When iterating over the dimension sizes, starting at the trailing dimension,
-// the dimension sizes must either be equal, or one of them does not exist.
-//
-//  equivalently:
-//
-// Test that 'from' is a suffix of 'to'.
-bool fusibleExpandTo(at::IntList from, at::IntList to) {
-  auto f = from.rbegin();
-  auto t = to.rbegin();
-  for (; f != from.rend() && t != to.rend(); f++, t++) {
-    // TODO: if 1->n expansion is supported, adjust this conditional.
-    if (*f != *t) return false;
-  }
-  return f == from.rend();
-}
-
-// This optimization fuses expand calls into ONNX operators, because it is
-// easier for non-strided backends to more efficiently do broadcasts if this is
-// local information.  This optimization is not useful for PyTorch as 'expand'
-// is free.
-void fuseBroadcast(const std::shared_ptr<Graph>& graph) {
-  for (auto it = graph->nodes().begin(); it != graph->nodes().end(); ++it) {
-    auto* n = *it;
-
-    // Can't fuse into nodes that don't support broadcasting
-    if (!isBroadcasting(n)) continue;
-
-    // If the node already broadcasts, can't "rebroadcast"
-    // TODO: Actually, maybe you can, if there is a broadcast for some
-    // dims, and then another broadcast for the rest.  But this will
-    // never happen in practice so I didn't implement it.
-    if (n->hasAttribute(kbroadcast) && n->i(kbroadcast)) continue;
-    JIT_ASSERT(!n->hasAttribute(kaxis));
-
-    auto* rhs = n->inputs().at(n->inputs().size() - 1);
-
-    // The rhs input isn't actually an expand, so no fusion available
-    if (rhs->kind() != kExpand) continue;
-
-    auto* new_rhs = rhs->input();
-
-    // We need to know what the type pre-expand is.  We should basically
-    // always have this information (because expands are only ever traced,
-    // not generated from symbolic), but if for some reason we don't
-    // have it, we need to skip.
-    if (!new_rhs->hasType()) continue;
-
-    // Not all broadcasts are supported by ONNX broadcast.
-    if (!fusibleExpandTo(new_rhs->type()->expect<TensorType>()->sizes(),    // from
-                         rhs->type()->expect<TensorType>()->sizes()) // to
-       ) continue;
-
-    n->replaceInput(n->inputs().size() - 1, new_rhs);
-    n->i_(kbroadcast,1);
-    if (rhs->uses().size() == 0) {
-      rhs->destroy();
-    }
-  }
-}
-
-
-void standardizeGraph(const std::shared_ptr<Graph>& graph) {
-  // TODO: move this out of here...
-  fuseBroadcast(graph);
-
-  for (auto it = graph->nodes().begin(); it != graph->nodes().end(); ++it) {
+void validateGraph(const std::shared_ptr<Graph>& graph) {
+  for (auto it = graph->begin(); it != graph->end(); ++it) {
       // Macro'ed so we get a marginally better line number on failed export
 #define FAIL_EXPORT(name) \
       throw std::runtime_error(std::string("ONNX export failed: ") + name + "\n\nGraph we tried to export:\n" + graph->toString());
@@ -339,7 +266,7 @@ void standardizeGraph(const std::shared_ptr<Graph>& graph) {
 std::string ExportGraph(const std::shared_ptr<Graph>& graph,
                         const std::vector<at::Tensor> & initializers) {
 
-  standardizeGraph(graph);
+  validateGraph(graph);
 
   onnx::ModelProto model_proto;
   // Set up nanopb callbacks and compute the amount of space needed to store

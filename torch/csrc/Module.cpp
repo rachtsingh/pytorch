@@ -1,6 +1,9 @@
 #include <Python.h>
 #include <sys/types.h>
+
+#ifndef _MSC_VER
 #include <sys/socket.h>
+#endif
 
 #include <stdbool.h>
 #include <unordered_map>
@@ -172,6 +175,8 @@ PyObject * THPModule_fromNumpy(PyObject *_unused, PyObject *array)
     return PyObject_CallFunctionObjArgs(THPDoubleTensorClass, array, NULL);
   } else if (type == NPY_FLOAT) {
     return PyObject_CallFunctionObjArgs(THPFloatTensorClass, array, NULL);
+  } else if (type == NPY_HALF) {
+    return PyObject_CallFunctionObjArgs(THPHalfTensorClass, array, NULL);
   } else if (type == NPY_INT64) {
     return PyObject_CallFunctionObjArgs(THPLongTensorClass, array, NULL);
   } else if (type == NPY_INT32) {
@@ -182,7 +187,7 @@ PyObject * THPModule_fromNumpy(PyObject *_unused, PyObject *array)
     return PyObject_CallFunctionObjArgs(THPByteTensorClass, array, NULL);
   }
   THPUtils_setError("can't convert a given np.ndarray to a tensor - it has an "
-      "invalid type. The only supported types are: double, float, int64, "
+      "invalid type. The only supported types are: double, float, float16, int64, "
       "int32, and uint8.");
   return NULL;
 #endif
@@ -193,7 +198,7 @@ PyObject * THPModule_fromNumpy(PyObject *_unused, PyObject *array)
  **/
 
 static PyObject * findTensor(PyObject *args, PyObject *kwargs) {
-  for (int i = 0; i < PyTuple_Size(args); i++) {
+  for (Py_ssize_t i = 0; i < PyTuple_Size(args); i++) {
     PyObject *item = PyTuple_GET_ITEM(args, i);
     if (THPModule_isTensor(item) || THPVariable_Check(item)) {
       return item;
@@ -329,6 +334,7 @@ IMPLEMENT_STATELESS(zeros_like)
 IMPLEMENT_STATELESS(ones)
 IMPLEMENT_STATELESS(ones_like)
 IMPLEMENT_STATELESS(index_select)
+IMPLEMENT_STATELESS(take)
 IMPLEMENT_STATELESS(ger)
 IMPLEMENT_STATELESS(mv)
 IMPLEMENT_STATELESS(mm)
@@ -490,7 +496,7 @@ PyObject *THPModule_addDocStr(PyObject *_unused, PyObject *args)
 PyObject *THPModule_inferSize(PyObject *_unused, PyObject *args)
 {
   HANDLE_TH_ERRORS
-  Py_ssize_t num_args = args ? PyTuple_Size(args) : 0;
+  Py_ssize_t num_args = args ? (Py_ssize_t) PyTuple_Size(args) : 0;
   THPUtils_assert(num_args == 2, "expected exactly 2 arguments");
   PyObject *arg1 = PyTuple_GET_ITEM(args, 0);
   THPUtils_assert(THPSize_Check(arg1), "expected a torch.Size as argument 1");
@@ -678,6 +684,7 @@ static PyMethodDef TorchMethods[] = {
   {"ones",            (PyCFunction)THPModule_ones,              METH_VARARGS | METH_KEYWORDS, NULL},
   {"ones_like",       (PyCFunction)THPModule_ones_like,         METH_VARARGS | METH_KEYWORDS, NULL},
   {"index_select",    (PyCFunction)THPModule_index_select,      METH_VARARGS | METH_KEYWORDS, NULL},
+  {"take",            (PyCFunction)THPModule_take,              METH_VARARGS | METH_KEYWORDS, NULL},
   {"addmm",           (PyCFunction)THPModule_addmm,             METH_VARARGS | METH_KEYWORDS, NULL},
   {"addmv",           (PyCFunction)THPModule_addmv,             METH_VARARGS | METH_KEYWORDS, NULL},
   {"addr",            (PyCFunction)THPModule_addr,              METH_VARARGS | METH_KEYWORDS, NULL},

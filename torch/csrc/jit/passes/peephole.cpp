@@ -1,4 +1,4 @@
-#include "torch/csrc/jit/passes/dead_code_elimination.h"
+#include "torch/csrc/jit/passes/peephole.h"
 
 namespace torch { namespace jit {
 
@@ -10,12 +10,12 @@ namespace torch { namespace jit {
 //
 // TODO: Decide what kind of fixed point strategy we will have
 void PeepholeOptimize(std::shared_ptr<Graph>& graph) {
-  for (auto it = graph->nodes().begin(); it != graph->nodes().end(); ++it) {
+  for (auto it = graph->begin(); it != graph->end(); ++it) {
     auto* n = *it;
 
     if (n->kind() == kexpand) {
       if (n->is(ksize) == n->input()->type()->expect<TensorType>()->sizes()) {
-        n->replaceAllUsesWith(n->input());
+        n->output()->replaceAllUsesWith(n->input());
         it.destroyCurrent();
         continue;
       }

@@ -1,4 +1,9 @@
+#define __STDC_FORMAT_MACROS
+
 #include <Python.h>
+#ifdef _MSC_VER
+#include <Windows.h>
+#endif
 #include <structmember.h>
 
 #define THP_HOST_HALF

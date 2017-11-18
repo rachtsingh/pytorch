@@ -7,6 +7,7 @@ import torch.utils.hooks as hooks
 import warnings
 import weakref
 from torch._six import imap
+from torch._C import _add_docstr
 
 
 class Variable(_C._VariableBase):
@@ -44,27 +45,6 @@ class Variable(_C._VariableBase):
         requires_grad (bool): Value of the requires_grad flag. **Keyword only.**
         volatile (bool): Value of the volatile flag. **Keyword only.**
     """
-
-    _fallthrough_methods = {
-        'size',
-        'stride',
-        'nelement',
-        'ndimension',
-        'element_size',
-        'is_contiguous',
-        'is_set_to',
-        'is_signed',
-        'numel',
-        'dim',
-        'get_device',
-        'is_cuda',
-        'shape'
-    }
-
-    def __getattr__(self, name):
-        if name in self._fallthrough_methods:
-            return getattr(self.data, name)
-        return object.__getattribute__(self, name)
 
     def __getitem__(self, key):
         if torch.is_tensor(key):
@@ -119,10 +99,11 @@ class Variable(_C._VariableBase):
         return 'Variable containing:' + self.data.__repr__()
 
     def __bool__(self):
-        if self.data.numel() == 0:
-            return False
-        raise RuntimeError("bool value of Variable objects containing non-empty " +
-                           torch.typename(self.data) + " is ambiguous")
+        if self.data.numel() <= 1:
+            return self.data.__bool__()
+        raise RuntimeError("bool value of Variable containing " +
+                           torch.typename(self.data) +
+                           " with more than one value is ambiguous")
 
     __nonzero__ = __bool__
 
@@ -154,14 +135,14 @@ class Variable(_C._VariableBase):
                 None values can be specified for scalar Variables or ones that
                 don't require grad. If a None value would be acceptable then
                 this argument is optional.
-            retain_graph (bool, optional): If False, the graph used to compute
+            retain_graph (bool, optional): If ``False``, the graph used to compute
                 the grads will be freed. Note that in nearly all cases setting
                 this option to True is not needed and often can be worked around
                 in a much more efficient way. Defaults to the value of
                 ``create_graph``.
-            create_graph (bool, optional): If true, graph of the derivative will
+            create_graph (bool, optional): If ``True``, graph of the derivative will
                 be constructed, allowing to compute higher order derivative
-                products. Defaults to False, unless ``gradient`` is a volatile
+                products. Defaults to ``False``, unless ``gradient`` is a volatile
                 Variable.
         """
         torch.autograd.backward(self, gradient, retain_graph, create_graph, retain_variables)
@@ -205,43 +186,48 @@ class Variable(_C._VariableBase):
         return handle
 
     def reinforce(self, reward):
-        """Registers a reward obtained as a result of a stochastic process.
+        def trim(str):
+            return '\n'.join([line.strip() for line in str.split('\n')])
 
-        Differentiating stochastic nodes requires providing them with reward
-        value. If your graph contains any stochastic operations, you should
-        call this function on their outputs. Otherwise an error will be raised.
+        raise RuntimeError(trim(r"""reinforce() was removed.
+            Use torch.distributions instead.
+            See http://pytorch.org/docs/master/distributions.html
 
-        Parameters:
-            reward(Tensor): Tensor with per-element rewards. It has to match
-                the device location and shape of Variable's data.
-        """
-        if not isinstance(self.grad_fn, StochasticFunction):
-            raise RuntimeError("reinforce() can be only called on outputs "
-                               "of stochastic functions")
-        self.grad_fn._reinforce(reward)
+            Instead of:
 
-    def detach(self):
-        """Returns a new Variable, detached from the current graph.
+            probs = policy_network(state)
+            action = probs.multinomial()
+            next_state, reward = env.step(action)
+            action.reinforce(reward)
+            action.backward()
 
-        Result will never require gradient. If the input is volatile, the output
-        will be volatile too.
+            Use:
 
-        .. note::
+            probs = policy_network(state)
+            m = torch.distributions.Multinomial(probs)
+            action = m.sample()
+            next_state, reward = env.step(action)
+            loss = -m.log_prob(action) * reward
+            loss.backward()
+        """))
 
-          Returned Variable uses the same data tensor, as the original one, and
-          in-place modifications on either of them will be seen, and may trigger
-          errors in correctness checks.
-        """
-        result = NoGrad()(self)  # this is needed, because it merges version counters
-        result._grad_fn = None
-        return result
+    detach = _add_docstr(_C._VariableBase.detach, r"""
+    Returns a new Variable, detached from the current graph.
 
-    def detach_(self):
-        """Detaches the Variable from the graph that created it, making it a
-        leaf.
-        """
-        self._grad_fn = None
-        self.requires_grad = False
+    Result will never require gradient. If the input is volatile, the output
+    will be volatile too.
+
+    .. note::
+
+      Returned Variable uses the same data tensor, as the original one, and
+      in-place modifications on either of them will be seen, and may trigger
+      errors in correctness checks.
+    """)
+
+    detach_ = _add_docstr(_C._VariableBase.detach_, r"""
+    Detaches the Variable from the graph that created it, making it a leaf.
+    Views cannot be detached in-place.
+    """)
 
     def retain_grad(self):
         """Enables .grad attribute for non-leaf Variables."""
@@ -264,10 +250,6 @@ class Variable(_C._VariableBase):
 
         self.register_hook(retain_grad_hook)
         self.retains_grad = True
-
-    def contiguous(self):
-        self.data = self.data.contiguous()
-        return self
 
     def type(self, t):
         if t != type(self.data):
@@ -313,17 +295,6 @@ class Variable(_C._VariableBase):
     def byte(self):
         return self.type(self._get_type('ByteTensor'))
 
-    def clamp(self, min=None, max=None):
-        if min is None and max is None:
-            raise ValueError("clamp requires specifying at least one of "
-                             "min and max arguments")
-        elif min is None and max is not None:
-            return CminConstant.apply(self, max)
-        elif min is not None and max is None:
-            return CmaxConstant.apply(self, min)
-        else:
-            return Clamp.apply(self, min, max)
-
     def prod(self, dim=None, keepdim=None):
         return Prod.apply(self, dim, keepdim)
 
@@ -342,26 +313,6 @@ class Variable(_C._VariableBase):
 
     def cumprod(self, dim):
         return Cumprod.apply(self, dim)
-
-    def var(self, dim=None, keepdim=False, unbiased=True):
-        if dim is None:
-            mean = self.mean().view(*(1 for s in self.size()))
-        else:
-            mean = self.mean(dim, keepdim)
-            # we could just set keepdim to True, but this preserves some fidelity
-            if keepdim is False and self.dim() != 1:
-                mean = mean.unsqueeze(dim)
-        mean_expanded = mean.expand_as(self)
-        zero_centered = self.sub(mean_expanded)
-        if dim is None:
-            var = zero_centered.mul(zero_centered).sum()
-        else:
-            var = zero_centered.mul(zero_centered).sum(dim, keepdim=keepdim)
-        numel = self.numel() if dim is None else self.size(dim)
-        return var.div(numel - int(unbiased))
-
-    def std(self, dim=None, keepdim=False, unbiased=True):
-        return self.var(dim, keepdim, unbiased).sqrt()
 
     def renorm(self, p, dim, maxnorm):
         t = self.transpose(dim, 0)
@@ -421,14 +372,6 @@ class Variable(_C._VariableBase):
     def expand_as(self, tensor):
         return self.expand(tensor.size())
 
-    def select(self, dim, _index):
-        dim = dim if dim >= 0 else dim + self.dim()
-        index = tuple(slice(None, None) for _ in range(dim)) + (_index,)
-        return Index.apply(self, index)
-
-    def permute(self, *permutation):
-        return Permute.apply(self, permutation)
-
     def multinomial(self, num_samples=1, replacement=False):
         return Multinomial.apply(self, num_samples, replacement)
 
@@ -478,6 +421,12 @@ class Variable(_C._VariableBase):
 
     def __hash__(self):
         return id(self)
+
+    def __dir__(self):
+        variable_methods = dir(self.__class__)
+        attrs = list(self.__dict__.keys())
+        keys = variable_methods + attrs
+        return sorted(keys)
 
     class _torch(object):
         @staticmethod
