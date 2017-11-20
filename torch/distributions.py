@@ -62,10 +62,15 @@ class Distribution(object):
         """
         raise NotImplementedError
 
-    def __init__(self, event_size, data_type):
+    def __init__(self, event_size, data_type, reparametrized=False):
         self._size = event_size
         self._type = data_type
+        self._reparametrized = reparametrized
 
+    @property
+    def reparametrized(self):
+        return self._reparametrized
+		
     @property
     def type(self):
         return self._type
@@ -248,7 +253,7 @@ class Normal(Distribution):
         _mu0 = mu / sigma
         if isinstance(_mu0, Number):
             super(Normal, self).__init__((1,),
-                                         'torch.FloatTensor')
+                                         'torch.FloatTensor', True)
         else:
             super(Normal, self).__init__(_mu0.size(),
                                          _mu0.data.type())
