@@ -133,7 +133,8 @@ class Bernoulli(Distribution):
                                           probs.data.type())
 
     def sample(self, *sizes):
-        return torch.bernoulli(self.probs.expand(*sizes, *self.probs.size()))
+        sizes = list(sizes) + list(self.probs.size())
+        return torch.bernoulli(self.probs.expand(*sizes))
 
     def log_prob(self, value):
         # compute the log probabilities for 0 and 1
