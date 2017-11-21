@@ -37,16 +37,16 @@ from torch.autograd import Variable
 __all__ = ['Distribution', 'Bernoulli', 'Categorical', 'Normal']
 
 
-def expanded_size(expand_size, orig_size):
+def expanded_shape(expand_shape, orig_shape):
     """Returns the expanded size given two sizes"""
     # strip leading 1s from original size
-    if not expand_size:
-        return orig_size
+    if not expand_shape:
+        return orig_shape
     # favor Normal(mean_1d, std_1d).sample(k).size()= (k, 1) instead of (k,) 
     #if orig_size == (1,):
-    #    return expand_size
+    #    return expand_shape
     else:
-        return expand_size + orig_size
+        return expand_shape + orig_shape
 
 class Distribution(object):
     r"""
@@ -63,11 +63,21 @@ class Distribution(object):
         """
         raise NotImplementedError
 
-    def __init__(self, event_size, data_type, reparametrized=False):
-        self._size = event_size
+    def __init__(self, event_shape, batch_shape, data_type, reparametrized=False):
+        self._event_shape = event_shape
+        self._batch_shape = batch_shape
         self._type = data_type
         self._reparametrized = reparametrized
 
+    
+    @property
+    def event_shape(self):
+        return self._event_shape
+
+    @property
+    def batch_shape(self):
+        return self._batch_shape    
+    
     @property
     def reparametrized(self):
         return self._reparametrized
@@ -76,11 +86,7 @@ class Distribution(object):
     def type(self):
         return self._type
 
-    @property
-    def event_size(self):
-        return self._size
-
-    def sample(self, *sizes):
+    def sample(self, *sample_shape):
         """
         Generates a single sample or single batch of samples if the distribution
         parameters are batched.
