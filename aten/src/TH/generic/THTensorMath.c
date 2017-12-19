@@ -3555,12 +3555,6 @@ void THTensor_(bhistc)(THTensor *hist, THTensor *tensor, int64_t nbins, real min
   );
 }
 
-// TODO Replace this with more accurate digamma().
-static inline real THTensor_(digamma_one)(real x) {
-  const real eps = x * 1e-2;
-  return (TH_MATH_NAME(lgamma)(x + eps) - TH_MATH_NAME(lgamma)(x - eps)) / (eps + eps);
-}
-
 // Approximate reparameterized gradient of Beta(x,alpha,beta) wrt alpha.
 // Assumes x is close to zero.
 static inline real THTensor_(beta_grad_alpha_small)(real x, real alpha, real beta) {
