@@ -1070,11 +1070,6 @@
 
 [[
   name: neg
-  types:
-    - floating_point
-    - Long
-    - Int
-    - Short
   backends:
     - CPU
     - CUDA
@@ -1092,11 +1087,6 @@
 
 [[
   name: neg_
-  types:
-    - floating_point
-    - Long
-    - Int
-    - Short
   backends:
     - CPU
     - CUDA
@@ -1111,12 +1101,10 @@
 [[
   name: atan2
   types:
-    - Float
-    - Double
+    - floating_point
   backends:
     - CPU
-  backend_type_pairs: [[CPU,Float],[CPU,Double],[CUDA,Float]]
-
+    - CUDA
   variants:
     - method
     - function
@@ -1132,7 +1120,11 @@
 
 [[
   name: atan2_
-  backend_type_pairs: [[CPU,Float],[CPU,Double],[CUDA,Float]]
+  types:
+    - floating_point
+  backends:
+    - CPU
+    - CUDA
   cname: atan2
   return: argument 0
   arguments:
@@ -2586,6 +2578,7 @@ static const char *R = &__R;
     - Double
   backends:
     - CPU
+    - CUDA
   variants:
     - method
     - function

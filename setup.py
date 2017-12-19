@@ -117,6 +117,13 @@ def build_libs(libs):
         build_libs_cmd = ['bash', 'torch/lib/build_libs.sh']
     my_env = os.environ.copy()
     my_env["PYTORCH_PYTHON"] = sys.executable
+    if not IS_WINDOWS:
+        if WITH_NINJA:
+            my_env["CMAKE_GENERATOR"] = '-GNinja'
+            my_env["CMAKE_INSTALL"] = 'ninja install'
+        else:
+            my_env['CMAKE_GENERATOR'] = ''
+            my_env['CMAKE_INSTALL'] = 'make install'
     if WITH_SYSTEM_NCCL:
         my_env["NCCL_ROOT_DIR"] = NCCL_ROOT_DIR
     if WITH_CUDA:
@@ -224,6 +231,10 @@ class develop(setuptools.command.develop.develop):
                         for entry in load(f)]
         with open('compile_commands.json', 'w') as f:
             json.dump(all_commands, f, indent=2)
+        if not WITH_NINJA:
+            print("WARNING: 'develop' is not building C++ code incrementally")
+            print("because ninja is not installed. Run this to enable it:")
+            print(" > pip install ninja")
 
 
 def monkey_patch_THD_link_flags():
@@ -430,13 +441,18 @@ main_sources = [
     "torch/csrc/utils/invalid_arguments.cpp",
     "torch/csrc/utils/object_ptr.cpp",
     "torch/csrc/utils/python_arg_parser.cpp",
-    "torch/csrc/utils/tensor_geometry.cpp",
+    "torch/csrc/utils/tensor_list.cpp",
+    "torch/csrc/utils/tensor_new.cpp",
+    "torch/csrc/utils/tensor_numpy.cpp",
+    "torch/csrc/utils/tensor_types.cpp",
     "torch/csrc/utils/tuple_parser.cpp",
+    "torch/csrc/utils/tensor_apply.cpp",
     "torch/csrc/allocators.cpp",
     "torch/csrc/serialization.cpp",
     "torch/csrc/jit/init.cpp",
     "torch/csrc/jit/interpreter.cpp",
     "torch/csrc/jit/ir.cpp",
+    "torch/csrc/jit/fusion_compiler.cpp",
     "torch/csrc/jit/python_ir.cpp",
     "torch/csrc/jit/test_jit.cpp",
     "torch/csrc/jit/tracer.cpp",
@@ -454,9 +470,11 @@ main_sources = [
     "torch/csrc/jit/passes/common_subexpression_elimination.cpp",
     "torch/csrc/jit/passes/peephole.cpp",
     "torch/csrc/jit/passes/inplace_check.cpp",
+    "torch/csrc/jit/passes/canonicalize.cpp",
     "torch/csrc/jit/passes/onnx/peephole.cpp",
     "torch/csrc/jit/generated/aten_dispatch.cpp",
     "torch/csrc/autograd/init.cpp",
+    "torch/csrc/autograd/grad_mode.cpp",
     "torch/csrc/autograd/engine.cpp",
     "torch/csrc/autograd/function.cpp",
     "torch/csrc/autograd/variable.cpp",
@@ -544,7 +562,7 @@ if WITH_CUDA:
     cuda_include_path = os.path.join(CUDA_HOME, 'include')
     include_dirs.append(cuda_include_path)
     include_dirs.append(tmp_install_path + "/include/THCUNN")
-    extra_compile_args += ['-DWITH_CUDA', '-DAT_CUDA_ENABLED']
+    extra_compile_args += ['-DWITH_CUDA']
     extra_compile_args += ['-DCUDA_LIB_PATH=' + cuda_lib_path]
     main_libraries += ['cudart', nvtoolext_lib_name]
     main_sources += [
@@ -555,7 +573,6 @@ if WITH_CUDA:
         "torch/csrc/cuda/utils.cpp",
         "torch/csrc/cuda/expand_utils.cpp",
         "torch/csrc/cuda/serialization.cpp",
-        "torch/csrc/jit/fusion_compiler.cpp",
     ]
     main_sources += split_types("torch/csrc/cuda/Tensor.cpp", ninja_global)
 
@@ -576,15 +593,6 @@ if WITH_CUDNN:
     include_dirs.insert(0, CUDNN_INCLUDE_DIR)
     if not IS_WINDOWS:
         extra_link_args.insert(0, '-Wl,-rpath,' + CUDNN_LIB_DIR)
-    main_sources += [
-        "torch/csrc/cudnn/BatchNorm.cpp",
-        "torch/csrc/cudnn/Conv.cpp",
-        "torch/csrc/cudnn/cuDNN.cpp",
-        "torch/csrc/cudnn/GridSampler.cpp",
-        "torch/csrc/cudnn/AffineGridGenerator.cpp",
-        "torch/csrc/cudnn/Types.cpp",
-        "torch/csrc/cudnn/Handles.cpp",
-    ]
     extra_compile_args += ['-DWITH_CUDNN']
 
 if WITH_NNPACK:
@@ -726,7 +734,7 @@ setup(name="torch", version=version,
       cmdclass=cmdclass,
       packages=packages,
       package_data={'torch': [
-          'lib/*.so*', 'lib/*.dylib*', 'lib/*.dll',
+          'lib/*.so*', 'lib/*.dylib*', 'lib/*.dll', 'lib/*.lib',
           'lib/torch_shm_manager',
           'lib/*.h',
           'lib/include/TH/*.h', 'lib/include/TH/generic/*.h',

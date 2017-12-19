@@ -5,6 +5,7 @@ import math
 import torch
 import unittest
 import random
+import warnings
 from copy import deepcopy
 from collections import OrderedDict
 from itertools import product
@@ -56,13 +57,10 @@ class TestAutograd(TestCase):
         y = Variable(torch.randn(5, 5), requires_grad=True)
         result = cls.apply(x, 2, y)
         go = Variable(torch.ones(1), requires_grad=True)
-        result.sum().backward(go)
+        result.sum().backward(go, create_graph=True)
 
         self.assertEqual(x.grad.data, y.data + torch.ones(5, 5))
         self.assertEqual(y.grad.data, x.data + torch.ones(5, 5) * 2)
-
-        self.assertFalse(x.grad.volatile)
-        self.assertFalse(y.grad.volatile)
         self.assertIsNotNone(x.grad.grad_fn)
         self.assertIsNotNone(y.grad.grad_fn)
 
@@ -93,11 +91,11 @@ class TestAutograd(TestCase):
         y_grad_desc = graph_desc(y.grad.grad_fn)
         self.assertEqual(
             x_grad_desc,
-            'Identity(AddBackward1(ExpandBackward(AccumulateGrad()), '
+            'CloneBackward(AddBackward1(ExpandBackward(AccumulateGrad()), '
             'MulBackward1(ExpandBackward(AccumulateGrad()), AccumulateGrad())))')
         self.assertEqual(
             y_grad_desc,
-            'Identity(AddBackward1(MulBackward0(ExpandBackward(AccumulateGrad())), '
+            'CloneBackward(AddBackward1(MulBackward0(ExpandBackward(AccumulateGrad())), '
             'MulBackward1(ExpandBackward(AccumulateGrad()), AccumulateGrad())))')
 
     def test_once_differentiable(self):
@@ -122,9 +120,9 @@ class TestAutograd(TestCase):
 
         x, y = self._function_test(MyFunction)
         self.assertEqual(graph_desc(x.grad.grad_fn),
-                         'Identity(Error(AccumulateGrad(), None, AccumulateGrad()))')
+                         'CloneBackward(Error(AccumulateGrad(), None, AccumulateGrad()))')
         self.assertEqual(graph_desc(y.grad.grad_fn),
-                         'Identity(Error(AccumulateGrad(), None, AccumulateGrad()))')
+                         'CloneBackward(Error(AccumulateGrad(), None, AccumulateGrad()))')
 
     def test_function_returns_input(self):
         class MyFunction(Function):
@@ -146,31 +144,30 @@ class TestAutograd(TestCase):
 
     def test_accumulate_grad(self):
         grad_output = Variable(torch.ones(5, 5))
-        for start_volatile, end_volatile in product((True, False), repeat=2):
-            go1 = grad_output.data if start_volatile else grad_output
-            go2 = grad_output.data if end_volatile else grad_output
 
+        def compute_grad(create_graph):
             x = Variable(torch.randn(5, 5), requires_grad=True)
             y = x + 2
-            y.backward(go1, retain_graph=True)
+            y.backward(grad_output, retain_graph=True)
             x_grad = x.grad
-            x_grad_clone = x.grad.data.clone()
-            y.backward(go2)
+            x_grad_clone = x.grad.clone()
+            y.backward(grad_output, create_graph=create_graph)
+            return x_grad, x_grad_clone
 
-            # That's the only case when we can accumulate in-place
-            # TODO: reconsider this logic (see accumulate_grad.cpp)
-            if start_volatile:
-                expected_grad = x_grad_clone * 2
-            else:
-                expected_grad = x_grad_clone
-            self.assertEqual(x_grad.data, expected_grad)
+        # Accumulate in-place when create_graph is False
+        x_grad, x_grad_clone = compute_grad(create_graph=False)
+        self.assertEqual(x_grad, x_grad_clone * 2)
+
+        # Accumulate out-of-place when create_graph is False
+        x_grad, x_grad_clone = compute_grad(create_graph=True)
+        self.assertEqual(x_grad, x_grad_clone)
 
     def test_hessian_vector(self):
         x = Variable(torch.randn(2, 2), requires_grad=True)
         y = Variable(torch.randn(2, 2), requires_grad=True)
 
         z = x ** 2 + y * x + y ** 2
-        z.backward(Variable(torch.ones(2, 2), requires_grad=True), retain_graph=True)
+        z.backward(torch.ones(2, 2), create_graph=True)
 
         x_grad = 2 * x.data + y.data
         y_grad = x.data + 2 * y.data
@@ -188,7 +185,7 @@ class TestAutograd(TestCase):
         x = Variable(torch.randn(2, 2), requires_grad=True)
         y = Variable(torch.randn(2, 2), requires_grad=True)
         z = x ** 2 + y * x + y ** 2
-        z.backward(Variable(torch.ones(2, 2)), retain_graph=True)
+        z.backward(torch.ones(2, 2), create_graph=True)
 
         x_grad = 2 * x.data + y.data
         y_grad = x.data + 2 * y.data
@@ -605,19 +602,11 @@ class TestAutograd(TestCase):
 
         TestFn.apply(b).sum().backward()
 
-    def test_volatile(self):
+    def test_no_grad(self):
         x = Variable(torch.ones(5, 5), requires_grad=True)
-        y = Variable(torch.ones(5, 5) * 4, volatile=True)
-
-        z = x ** 2
-        self.assertFalse(z.volatile)
-        self.assertTrue(z.requires_grad)
-        self.assertIsNotNone(z.grad_fn)
-        z.backward(torch.ones(5, 5))
-        self.assertEqual(x.grad.data, torch.ones(5, 5) * 2)
-
-        w = z + y
-        self.assertTrue(w.volatile)
+        y = Variable(torch.ones(5, 5) * 4)
+        with torch.no_grad():
+            w = x + y
         self.assertFalse(w.requires_grad)
         self.assertRaises(RuntimeError, lambda: w.backward(torch.ones(5, 5)))
         self.assertIsNone(w.grad_fn)
@@ -743,6 +732,12 @@ class TestAutograd(TestCase):
         expected_grad = torch.Tensor(4, 4, 4).zero_()
         expected_grad[1].fill_(3)
         self.assertEqual(y.grad.data, expected_grad)
+
+    def test_volatile_deprecated(self):
+        v = torch.autograd.Variable(torch.randn(3, 3))
+        with warnings.catch_warnings(record=True) as w:
+            self.assertFalse(v.volatile)
+        self.assertIn('volatile', str(w[0].message))
 
     def test_requires_grad(self):
         x = Variable(torch.randn(5, 5))
@@ -901,6 +896,28 @@ class TestAutograd(TestCase):
         self.assertFalse(mask.requires_grad)
         y = x.masked_fill(mask, 0)
         y.sum().backward()
+
+    def test_mark_non_differentiable_mixed(self):
+        class MyFunction(Function):
+            @staticmethod
+            def forward(ctx, input):
+                a = input + 1
+                b = input + 2
+                ctx.mark_non_differentiable(a)
+                return a, b
+
+            @staticmethod
+            def backward(ctx, grad_a, grad_b):
+                self.assertTrue((grad_a == 0).all())
+                self.assertTrue((grad_b == 1).all())
+                return grad_b
+
+        x = Variable(torch.randn(5, 5), requires_grad=True)
+        a, b = MyFunction.apply(x)
+        self.assertFalse(a.requires_grad)
+        self.assertTrue(b.requires_grad)
+        b.sum().backward()
+        self.assertEqual(x.grad.data, torch.ones(5, 5))
 
     def test_mark_non_differentiable_none(self):
         # This used to segfault because MyFunction would send back null
@@ -1140,12 +1157,6 @@ class TestAutograd(TestCase):
         # wanted. detach() is an advanced option.
         self.assertEqual(x.grad.data, torch.ones(10, 10))
 
-        # detach() should preserve volatile flag
-        x = Variable(torch.randn(10, 10), volatile=True)
-        y = x * 2
-        y = y.detach()
-        self.assertTrue(y.volatile)
-
         # in-place detach
         x = Variable(torch.randn(10, 10), requires_grad=True)
         y = Variable(torch.randn(10, 10), requires_grad=True)
@@ -1160,6 +1171,16 @@ class TestAutograd(TestCase):
         # in-place deatch on a view raises an exception
         view = x.narrow(0, 1, 4)
         self.assertRaisesRegex(RuntimeError, 'view', lambda: view.detach_())
+
+    def test_detach_base(self):
+        "detaching base does not detach view"
+        x = Variable(torch.randn(10, 10), requires_grad=True)
+        view = x.narrow(0, 1, 4)
+        x.detach_()
+        self.assertFalse(x.requires_grad)
+        self.assertTrue(view.requires_grad)
+        self.assertIsNotNone(view.grad_fn)
+        self.assertIs(view._base, x)
 
     def _test_type_conversion_backward(self, t, ):
         fvar = Variable(t(torch.randn(5, 5).float()), requires_grad=True)
@@ -1277,6 +1298,15 @@ class TestAutograd(TestCase):
             if sys.version_info[0] == 2:
                 self._test_scalar_conversions(lambda x: x.cuda(), lambda x: long(x))
 
+    @unittest.skipIf(not torch.cuda.is_available(), "CUDA unavailable")
+    def test_pin_memory(self):
+        x = Variable(torch.randn(2, 2), requires_grad=True)
+        self.assertEqual(x, x.pin_memory())
+        self.assertIsNot(x, x.pin_memory())
+        self.assertTrue(x.pin_memory().requires_grad)
+        gradcheck(lambda x: x.pin_memory(), [x])
+        gradgradcheck(lambda x: x.pin_memory(), [x])
+
     def test_isolated_node(self):
         x = Variable(torch.randn(5, 5), requires_grad=True)
         y = Variable(torch.randn(5, 5), requires_grad=True)
@@ -1291,6 +1321,10 @@ class TestAutograd(TestCase):
         self.assertEqual(2, len(x.shape))
         self.assertEqual(x.shape[0], 3)
         self.assertEqual(x.shape[1], 4)
+
+    def test_numpy_requires_grad(self):
+        x = Variable(torch.randn(2, 2), requires_grad=True)
+        self.assertRaisesRegex(RuntimeError, 'requires grad', lambda: x.numpy())
 
     def test_return_leaf(self):
         class Identity(Function):
@@ -1356,12 +1390,23 @@ class TestAutograd(TestCase):
         self.assertEqual(y.grad.data, torch.ones(5))
         self.assertEqual(z.grad.data, torch.ones(5) * 2)
 
-    def test_volatile_assignment(self):
-        x = Variable(torch.randn(5, 5))
-        y = Variable(torch.randn(5), volatile=True)
+    def test_no_grad_assignment(self):
+        x = Variable(torch.randn(5, 5), requires_grad=True)
+        y = Variable(torch.randn(5))
+        with torch.no_grad():
+            x[0] = y
 
-        x[0] = y
-        self.assertTrue(x.volatile)
+        self.assertTrue(x.requires_grad)
+        self.assertIsNone(x.grad_fn)
+
+    def test_no_grad_modifies_version(self):
+        x = Variable(torch.randn(5), requires_grad=True)
+        y = Variable(torch.randn(5), requires_grad=True)
+        z = (x * y).sum()
+        with torch.no_grad():
+            x *= 2
+        self.assertRaisesRegex(RuntimeError, 'modified by an inplace operation',
+                               lambda: z.backward())
 
     def test_backward_copy(self):
         # This tests checks backward engine for a very subtle bug that appreared
@@ -1490,20 +1535,17 @@ class TestAutograd(TestCase):
 
     def test_pickle(self):
         x = Variable(torch.randn(10, 10), requires_grad=True)
-        y = Variable(torch.randn(10, 10), volatile=True)
-        z = Variable(torch.randn(10, 10), requires_grad=False)
+        y = Variable(torch.randn(10, 10), requires_grad=False)
 
         def assert_strict_equal(var1, var2):
             self.assertEqual(var1.data, var2.data)
             self.assertEqual(var1.requires_grad, var2.requires_grad)
-            self.assertEqual(var1.volatile, var2.volatile)
 
-        serialized = [pickle.dumps([x, y, z], protocol=p) for p in range(3)]
+        serialized = [pickle.dumps([x, y], protocol=p) for p in range(3)]
         for dump in serialized:
-            xc, yc, zc = pickle.loads(dump)
+            xc, yc = pickle.loads(dump)
             assert_strict_equal(xc, x)
             assert_strict_equal(yc, y)
-            assert_strict_equal(zc, z)
 
     def test_dep_nograd(self):
         class F1(Function):
@@ -1551,7 +1593,7 @@ class TestAutograd(TestCase):
 
         x = Variable(torch.randn(2, 2), requires_grad=True)
         out = Reenter.apply(x)
-        out.sum().backward()
+        out.sum().backward(create_graph=True)
         self.assertEqual(x.grad.data, y_data)
 
     def test_cat(self):
@@ -1584,6 +1626,37 @@ class TestAutograd(TestCase):
                               lambda a, b, c, dim: torch.cat((a, b, c), dim),
                               True, f_args_variable, f_args_tensor)
 
+    @skipIfNoLapack
+    def test_potrf(self):
+        root = Variable(torch.tril(torch.rand(S, S)), requires_grad=True)
+
+        def run_test(upper):
+            def func(root):
+                x = torch.mm(root, root.t())
+                return torch.potrf(x, upper)
+
+            gradcheck(func, [root])
+            gradgradcheck(func, [root])
+
+        run_test(upper=True)
+        run_test(upper=False)
+
+    @skipIfNoLapack
+    def test_trtrs(self):
+        def _test_with_size(N, C):
+            A = Variable(torch.rand(N, N), requires_grad=True)
+            b = Variable(torch.rand(N, C), requires_grad=True)
+
+            for upper, transpose, unitriangular in product((True, False), repeat=3):
+                def func(A, b):
+                    return torch.trtrs(b, A, upper, transpose, unitriangular)
+
+                gradcheck(func, [A, b])
+                gradgradcheck(func, [A, b])
+
+        _test_with_size(S, S + 1)
+        _test_with_size(S, S - 1)
+
     def test_variable_traverse(self):
         def get_out_and_unrefed_cycle():
             inp = Variable(torch.randn(10), requires_grad=True)
@@ -1615,6 +1688,7 @@ class TestAutograd(TestCase):
         run_test((10,), 1)
         run_test((10,), 1.5)
 
+    @unittest.skipIf(sys.platform == "win32", "Profiler uses `c++filt`, which doesn't exist on Windows.")
     def test_profiler(self):
         x = Variable(torch.randn(10, 10))
 
@@ -1636,43 +1710,6 @@ class TestAutograd(TestCase):
 
         for key in keys:
             self.assertTrue(hasattr(x, key))
-
-    @skipIfNoLapack
-    def test_potrf_gradient(self):
-        def _calc_deriv_numeric(A, L, upper):
-            # numerical forward derivative
-            dA = Variable(_make_cov(5))
-            eps = 1e-6
-            outb = torch.potrf(A + (eps / 2) * dA, upper)
-            outa = torch.potrf(A - (eps / 2) * dA, upper)
-            dL = (outb - outa) / eps
-
-            return dA, dL
-
-        def _calc_deriv_sym(A, L, upper):
-            # reverse mode
-            Lbar = Variable(torch.rand(5, 5).tril())
-            if upper:
-                Lbar = Lbar.t()
-            L.backward(Lbar)
-            Abar = A.grad
-
-            return Abar, Lbar
-
-        def _check_total_variation(A, L, upper):
-            dA, dL = _calc_deriv_numeric(A, L, upper)
-            Abar, Lbar = _calc_deriv_sym(A, L, upper)
-
-            # compare df = Tr(dA^T Abar) = Tr(dL^T Lbar)
-            df1 = (dL * Lbar).sum()
-            df2 = (dA * Abar).sum()
-
-            self.assertEqual(df1, df2, prec=1e-3)
-
-        for upper in [True, False]:
-            A = Variable(_make_cov(5), requires_grad=True)
-            L = torch.potrf(A, upper)
-            _check_total_variation(A, L, upper)
 
     def test_as_strided(self):
         x = Variable(torch.arange(0, 25).view(5, 5), requires_grad=True)
@@ -1711,25 +1748,6 @@ class TestAutograd(TestCase):
         v2.mul_(2)
         x.sum().backward()
         self.assertEqual(root.grad.data.tolist(), [[1, 2], [1, 1]])
-
-    def test_inplace_view_volatile(self):
-        # an in-place operation on a view that makes the view volatile should
-        # make the base volatile too
-        base = Variable(torch.randn(2, 2))
-        view = base.narrow(0, 0, 1)
-        view.add_(Variable(torch.randn(1, 2), volatile=True))
-        self.assertTrue(view.volatile)
-        self.assertTrue(base.volatile)
-
-    def test_inplace_base_volatile(self):
-        # an in-place operation on a base that makes the base volatile should
-        # trigger a consistency exception if the view is used in a differentiable
-        # op
-        x = Variable(torch.randn(2, 2), requires_grad=True)
-        base = Variable(torch.randn(2, 2))
-        view = base.narrow(0, 0, 1)
-        base.add_(Variable(torch.randn(1, 2), volatile=True))
-        self.assertRaisesRegex(RuntimeError, 'is_volatile', lambda: view + x)
 
     def test_inplace_view_gradcheck(self):
         # gradcheck modifications to views
@@ -1771,20 +1789,23 @@ class TestAutograd(TestCase):
         self.assertEqual(b.grad.data.tolist(), [5])
         self.assertIsNone(a.grad)
 
-    def test_inplace_view_flags(self):
-        # check that an exception is thrown if the flags on the base do not
-        # match the flags on the view
-        x = Variable(torch.ones(5))
+    def test_inplace_view_modify_base(self):
+        # Test that an in-place operation on a base that forced it to require
+        # grad also forces any previous views to require grad and backprop
+        # correctly
         r = Variable(torch.ones(1), requires_grad=True)
-        r2 = Variable(torch.ones(1), requires_grad=True)
-        v = x.select(0, 1)
-        x.add_(r)
-        self.assertFalse(v.requires_grad)
-        self.assertTrue(x.requires_grad)
-        # v is dependent on r due to the addition above, but v still doesn't
-        # requires_grad. The addition to r2 should raise an error until we
-        # share requires_grad between base and views.
-        self.assertRaisesRegex(RuntimeError, 'requires_grad', lambda: v + r2)
+
+        def fn(r):
+            x = Variable(torch.ones(5))
+            v = x.select(0, 1)
+            self.assertFalse(v.requires_grad)
+            self.assertIsNone(v.grad_fn)
+            x.add_(r)  # v is now dependent on r due to the in-place op on x
+            self.assertTrue(v.requires_grad)
+            return v
+
+        gradcheck(fn, [r])
+        gradgradcheck(fn, [r])
 
     def test_inplace_view_python(self):
         # in-place modifications of Python-autograd created view
@@ -1893,9 +1914,28 @@ def prod_single_zero(dim_size):
     return Variable(result, requires_grad=True)
 
 
-def _make_cov(S):
-    L = torch.tril(torch.rand(S, S))
-    return torch.mm(L, L.t())
+def random_square_matrix_of_rank(l, rank):
+    assert rank <= l
+    A = torch.randn(l, l)
+    u, s, v = A.svd()
+    for i in range(l):
+        if i >= rank:
+            s[i] = 0
+        elif s[i] == 0:
+            s[i] = 1
+    return u.mm(torch.diag(s)).mm(v.transpose(0, 1))
+
+
+def random_symmetric_matrix(l):
+    A = torch.randn(l, l)
+    return A.mm(A.transpose(0, 1))
+
+
+def random_fullrank_matrix_distinct_singular_value(l):
+    A = torch.randn(l, l)
+    u, _, v = A.svd()
+    s = torch.arange(1, l + 1).mul_(1.0 / (l + 1))
+    return u.mm(torch.diag(s)).mm(v.transpose(0, 1))
 
 
 class dont_convert(tuple):
@@ -1905,7 +1945,6 @@ class dont_convert(tuple):
 L = 20
 M = 10
 S = 5
-
 
 # (name, size, args...)
 method_tests = [
@@ -2166,8 +2205,14 @@ method_tests = [
     ('index_copy', (S, S), (0, index_perm_variable(2, S), (2, S)), 'dim', [0]),
     ('index_fill', (S, S), (0, index_variable(2, S), 2), 'dim', [0]),
     ('inverse', (S, S), (), '', (), [skipIfNoLapack]),
+    ('det', (S, S), (), '', (), [skipIfNoLapack]),
+    ('det', lambda: random_symmetric_matrix(S), (), 'symmetric', (), [skipIfNoLapack]),
+    ('det', lambda: random_square_matrix_of_rank(S, S - 2), (), 'dim2_null', (), [skipIfNoLapack]),
+    ('det', lambda: random_square_matrix_of_rank(S, 1), (), 'rank1', (), [skipIfNoLapack]),
+    ('det', lambda: random_square_matrix_of_rank(S, 2), (), 'rank2', (), [skipIfNoLapack]),
+    ('det', lambda: random_fullrank_matrix_distinct_singular_value(S), (), 'distinct_postive_s', (), [skipIfNoLapack]),
+    ('svd', lambda: random_fullrank_matrix_distinct_singular_value(S), (), '', (), [skipIfNoLapack]),
     ('gesv', (S, S), ((S, S),), '', (), [skipIfNoLapack]),
-    ('potrf', _make_cov(S), (True,), '', (), [skipIfNoLapack]),
     ('eq', (S, S, S), ((S, S, S),)),
     ('eq', (S, S, S), ((1,),), 'broadcast_rhs'),
     ('eq', (1,), ((S, S, S),), 'broadcast_lhs'),
@@ -2303,6 +2348,8 @@ def create_input(call_args, requires_grad=True, non_contiguous=False):
                 return Variable(maybe_non_contig(arg), requires_grad=requires_grad)
         elif isinstance(arg, Variable) and non_contiguous:
             return Variable(maybe_non_contig(arg.data), requires_grad=arg.requires_grad)
+        elif callable(arg):
+            return map_arg(arg())
         else:
             return arg
     return tuple(map_arg(arg) for arg in call_args)
@@ -2337,7 +2384,19 @@ EXCLUDE_FUNCTIONAL = {
     'addr',
 }
 EXCLUDE_GRADCHECK = {
-    'potrf'
+}
+EXCLUDE_GRADGRADCHECK = {
+    'svd'
+}
+EXCLUDE_GRADGRADCHECK_BY_TEST_NAME = {
+    # Some of the following det ones pass because random matrix has full rank
+    # with high probability. But we can't rely on this. So only test gradgrad on
+    # test_det_distinct_postive_s.
+    'test_det',
+    'test_det_symmetric',
+    'test_det_dim2_null',
+    'test_det_rank1',
+    'test_det_rank2'
 }
 
 
@@ -2359,6 +2418,7 @@ def exclude_tensor_method(name, test_name):
         'resize_as',
         'scatter',
         'scatter_add',
+        'det',
     }
     if test_name in exclude_all_tensor_method_by_test_name:
         return True
@@ -2390,9 +2450,11 @@ def gradgradcheck_method_precision_override(test_name):
     return override
 
 
-def run_grad_and_gradgrad_checks(test_case, test_name, apply_method, output_variable, input_variables):
+def run_grad_and_gradgrad_checks(test_case, name, test_name, apply_method, output_variable,
+                                 input_variables, run_gradgradcheck=True):
     test_case.assertTrue(gradcheck(apply_method, input_variables, eps=1e-6, atol=PRECISION))
-
+    if name in EXCLUDE_GRADGRADCHECK or test_name in EXCLUDE_GRADGRADCHECK_BY_TEST_NAME:
+        return
     grad_y = generate_gradoutput(output_variable, non_contiguous=True)
     gradgradcheck_precision_override = gradgradcheck_method_precision_override(test_name)
     if gradgradcheck_precision_override is not None:
@@ -2400,7 +2462,7 @@ def run_grad_and_gradgrad_checks(test_case, test_name, apply_method, output_vari
         rtol = gradgradcheck_precision_override['rtol']
         test_case.assertTrue(gradgradcheck(apply_method, input_variables, grad_y, atol=atol, rtol=rtol))
     else:
-        test_case.assertTrue(gradgradcheck(apply_method, input_variables, grad_y,))
+        test_case.assertTrue(gradgradcheck(apply_method, input_variables, grad_y))
 
 
 def run_functional_checks(test_case, test_name, name, apply_fn, run_grad_checks,
@@ -2413,7 +2475,7 @@ def run_functional_checks(test_case, test_name, name, apply_fn, run_grad_checks,
         test_case.assertEqual(unpack_variables(output_variable), output_tensor)
 
     if run_grad_checks:
-        run_grad_and_gradgrad_checks(test_case, test_name, apply_fn,
+        run_grad_and_gradgrad_checks(test_case, name, test_name, apply_fn,
                                      output_variable, f_args_variable)
 
     self_variable = f_args_variable[0]
@@ -2457,7 +2519,7 @@ for test in method_tests:
                     # TODO: check that both have changed after adding all inplace ops
 
                 if not is_inplace and name not in EXCLUDE_GRADCHECK:
-                    run_grad_and_gradgrad_checks(self, test_name,
+                    run_grad_and_gradgrad_checks(self, name, test_name,
                                                  lambda *inputs: getattr(inputs[0], name)(*inputs[1:]),
                                                  output_variable, (self_variable,) + args_variable)
 
@@ -2483,8 +2545,10 @@ for test in method_tests:
                     # compare grads to inplace grads
                     inplace_name = name + '_'
                     # can't broadcast inplace to left hand side
-                    broadcast_skip_inplace = 'broadcast_lhs' in test_name or 'broadcast_all' in test_name
-                    if hasattr(Variable(torch.ones(1)), inplace_name) and not broadcast_skip_inplace:
+                    skip_inplace = ('broadcast_lhs' in test_name or
+                                    'broadcast_all' in test_name or
+                                    test_name.startswith('test_resize'))
+                    if hasattr(Variable(torch.ones(1)), inplace_name) and not skip_inplace:
                         output_variable = getattr(self_variable, name)(*args_variable)
                         if not isinstance(output_variable, tuple):
                             output_variable = (output_variable,)

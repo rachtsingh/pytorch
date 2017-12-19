@@ -28,7 +28,7 @@ from torch.nn import Parameter
 from torch.nn.parallel._functions import Broadcast
 from common_nn import NNTestCase, ModuleTest, CriterionTest, TestBase, \
     module_tests, criterion_tests, TEST_CUDA, TEST_MULTIGPU, TEST_CUDNN, \
-    TEST_CUDNN_VERSION, loss_reference_fns
+    TEST_CUDNN_VERSION, loss_reference_fns, get_size_average
 from common import freeze_rng_state, run_tests, TestCase, skipIfNoLapack, \
     TEST_SCIPY, download_file
 
@@ -275,7 +275,7 @@ class TestNN(NNTestCase):
         d_params = []
         for p in module.parameters():
             if p.grad is None:
-                p._grad = Variable(p.data.clone().zero_(), volatile=True)
+                p._grad = torch.zeros_like(p)
             params.append(p.data)
             d_params.append(p.grad.data)
         return params, d_params
@@ -462,27 +462,20 @@ class TestNN(NNTestCase):
         self.assertEqual(module.weight.grad.data, module.weight.data.clone().zero_())
         self.assertEqual(module.bias.grad.data, module.bias.data.clone().zero_())
 
-        # non-volatile grad should be zeroed out of place
-        initial = module.weight.grad = Variable(torch.ones(5, 5))
-        module.zero_grad()
-        self.assertIsNot(module.weight.grad, initial)
-        self.assertEqual(module.weight.grad.data, torch.zeros(5, 5))
-
-    def test_volatile(self):
+    def test_no_grad(self):
         module = nn.Conv2d(2, 5, kernel_size=3, padding=1)
         input = torch.randn(1, 2, 10, 10)
         x = Variable(input)
-        y = Variable(input.clone(), volatile=True)
+        y = Variable(input.clone())
 
         output = module(x)
-        self.assertFalse(output.volatile)
         self.assertTrue(output.requires_grad)
         output.backward(torch.ones(1, 5, 10, 10))
 
-        vol_output = module(y)
-        self.assertTrue(vol_output.volatile)
-        self.assertFalse(vol_output.requires_grad)
-        self.assertRaises(RuntimeError, lambda: vol_output.backward(torch.ones(1, 5, 10, 10)))
+        with torch.no_grad():
+            output2 = module(y)
+            self.assertFalse(output2.requires_grad)
+            self.assertRaises(RuntimeError, lambda: output2.backward(torch.ones(1, 5, 10, 10)))
 
     def _test_dropout(self, cls, input):
         p = 0.2
@@ -1549,6 +1542,21 @@ class TestNN(NNTestCase):
         self.assertEqual(out, l(i))
 
     @unittest.skipIf(not TEST_MULTIGPU, "multi-GPU not supported")
+    def test_data_parallel_no_grad(self):
+        test = self
+
+        class Layer(nn.Module):
+            def forward(self, x):
+                test.assertFalse(torch.is_grad_enabled())
+                return x
+
+        l = Layer()
+        i = Variable(torch.randn(20, 10).float().cuda())
+        with torch.no_grad():
+            dp.data_parallel(l, i, (0, 1))
+        self.assertRaises(AssertionError, lambda: dp.data_parallel(l, i, (0, 1)))
+
+    @unittest.skipIf(not TEST_MULTIGPU, "multi-GPU not supported")
     def test_data_parallel(self):
         l = nn.Linear(10, 5).float().cuda()
         i = Variable(torch.randn(20, 10).float().cuda(1))
@@ -2192,6 +2200,34 @@ class TestNN(NNTestCase):
 
                 hx.sum().backward()
 
+    def test_RNN_cell_no_broadcasting(self):
+        def test(cell_module, input, hx, input_size, hidden_size):
+            cell = cell_module(input_size, hidden_size)
+            self.assertRaises(RuntimeError, lambda: cell(input, hx))
+
+        def test_all(hidden_size, bad_hx, good_hx, input_size, input):
+            test(nn.RNNCell, input, bad_hx, input_size, hidden_size)
+            test(nn.GRUCell, input, bad_hx, input_size, hidden_size)
+            test(nn.LSTMCell, input, (bad_hx, good_hx), input_size, hidden_size)
+            test(nn.LSTMCell, input, (good_hx, bad_hx), input_size, hidden_size)
+
+        hidden_size = 20
+        input_size = 10
+        input = Variable(torch.randn(3, input_size))
+        bad_hx = Variable(torch.randn(1, hidden_size))
+        good_hx = Variable(torch.randn(3, hidden_size))
+
+        # Test hidden/input batch size broadcasting
+        test_all(hidden_size, bad_hx, good_hx, input_size, input)
+
+        # Test hx's hidden_size vs module's hidden_size broadcasting
+        bad_hx = Variable(torch.randn(3, 1))
+        test_all(hidden_size, bad_hx, good_hx, input_size, input)
+
+        # Test input's input_size vs module's input_size broadcasting
+        bad_input = Variable(torch.randn(3, 1))
+        test_all(hidden_size, good_hx, good_hx, input_size, bad_input)
+
     def test_invalid_dropout_p(self):
         v = Variable(torch.ones(1))
         self.assertRaises(ValueError, lambda: nn.Dropout(-0.1))
@@ -2461,6 +2497,69 @@ class TestNN(NNTestCase):
                         self.assertEqual(hx.grad.data, hx_cuda.grad.data)
         finally:
             torch.backends.cudnn.enabled = prev
+
+    def test_rnn_args_check(self):
+        input_size = 3
+        hidden_size = 5
+        num_layers = 2
+        batch_size = 4
+        seq_len = 6
+        num_directions = 1
+
+        def test(input_shape, hidden_shape, mode):
+            for input, hidden in get_inputs(input_shape, hidden_shape, mode):
+                model = getattr(nn, mode)(input_size, hidden_size, num_layers)
+                self.assertRaises(RuntimeError, lambda: model(input, hidden))
+
+        correct_input_shape = (seq_len, batch_size, input_size)
+        correct_hidden_shape = (num_layers * num_directions, batch_size, hidden_size)
+
+        def update_tuple(tup, dim, delta):
+            new_tup = list(tup)
+            new_tup[dim] = delta
+            return tuple(new_tup)
+
+        def get_inputs(input_shape, hidden_shape, mode):
+            '''returns list( tuple(input, hidden) )
+            where input, hidden are inputs to a model'''
+            input = Variable(torch.randn(input_shape))
+            hidden = Variable(torch.randn(hidden_shape))
+            if mode is not 'LSTM':
+                return [(input, hidden)]
+            if hidden_shape == correct_hidden_shape:
+                return [(input, (hidden, hidden))]
+            good_hidden = Variable(torch.randn(correct_hidden_shape))
+            return [
+                (input, (hidden, good_hidden)),
+                (input, (good_hidden, hidden)),
+            ]
+
+        rnn_modes = ['RNN', 'GRU', 'LSTM']
+        for mode in rnn_modes:
+            # Incorrect input batch size
+            input_shape = update_tuple(correct_input_shape, 1, -1)
+            hidden_shape = correct_hidden_shape
+            test(input_shape, hidden_shape, mode)
+
+            # Incorrect hidden batch size
+            input_shape = correct_input_shape
+            hidden_shape = update_tuple(correct_hidden_shape, 1, -1)
+            test(input_shape, hidden_shape, mode)
+
+            # Incorrect input size
+            input_shape = update_tuple(correct_input_shape, 2, -1)
+            hidden_shape = correct_hidden_shape
+            test(input_shape, hidden_shape, mode)
+
+            # Incorrect hidden size
+            input_shape = correct_input_shape
+            hidden_shape = update_tuple(correct_hidden_shape, 2, -1)
+            test(input_shape, hidden_shape, mode)
+
+            # Incorrect hidden[0]
+            input_shape = correct_input_shape
+            hidden_shape = update_tuple(correct_hidden_shape, 0, -1)
+            test(input_shape, hidden_shape, mode)
 
     def test_rnn_initial_hidden_state(self):
         rnn_modes = ['RNN', 'GRU', 'LSTM']
@@ -3255,6 +3354,13 @@ class TestNN(NNTestCase):
         _assertGradAndGradgradChecks(self, lambda x1, x2: F.bilinear(x1, x2, module.weight, module.bias),
                                      (input1_1, input2_1))
 
+    def test_conv_tbc(self):
+        inp = Variable(torch.randn(9, 4, 5), requires_grad=True)
+        weight = Variable(torch.randn(3, 5, 6), requires_grad=True)
+        bias = Variable(torch.randn(6), requires_grad=True)
+
+        gradcheck(lambda i, w, b, pad: F.conv_tbc(i, w, b, pad), (inp, weight, bias, 3))
+
     def run_conv_double_back_test(self, kern, stride, padding, chan_in, chan_out, batch_size,
                                   inp_size, dilation, no_weight, groups=1, use_cuda=False, use_bias=True):
         tensor = torch.Tensor(1)
@@ -3837,19 +3943,64 @@ new_criterion_tests = [
         desc='weights'
     ),
     dict(
+        module_name='NLLLoss',
+        input_size=(2, 3, 5, 5, 2, 2),
+        target_fn=lambda: torch.rand(2, 5, 5, 2, 2).mul(3).floor().long(),
+        reference_fn=lambda i, t, m:
+            loss_reference_fns['NLLLossNd'](i, t, size_average=get_size_average(m)),
+        check_no_size_average=True,
+        desc='higher_dim'
+    ),
+    dict(
         module_name='PoissonNLLLoss',
         input_size=(2, 3, 4, 5),
         target_fn=lambda: torch.randn(2, 3, 4, 5).floor_().abs_(),
-        desc='reduced_loss',
+        desc='no_full_loss',  # without sterling approx
     ),
     dict(
         module_name='PoissonNLLLoss',
         constructor_args=(False, True, True),
         input_fn=lambda: torch.randn(2, 3, 4, 5).abs_().add_(0.001),
         target_fn=lambda: torch.randn(2, 3, 4, 5).floor_().abs_(),
-        desc='full_loss',
+        desc='full_loss',  # with sterling approx
     ),
 ]
+
+
+def poissonnllloss_no_reduce_test():
+    t = Variable(torch.randn(10, 10))
+    return dict(
+        fullname='PoissonNLLLLoss_no_reduce',
+        constructor=wrap_functional(
+            lambda i: F.poisson_nll_loss(i, t.type_as(i), reduce=False)),
+        input_fn=lambda: torch.rand(10, 10),
+        pickle=False)
+
+
+def bceloss_no_reduce_test():
+    t = torch.randn(15, 10).gt(0).double()
+    return dict(
+        fullname='BCELoss_no_reduce',
+        constructor=wrap_functional(
+            lambda i: F.binary_cross_entropy(i, Variable(t.type_as(i.data)), reduce=False)),
+        input_fn=lambda: torch.rand(15, 10).clamp_(2e-2, 1 - 2e-2),
+        reference_fn=lambda i, m: -(t * i.log() + (1 - t) * (1 - i).log()),
+        check_gradgrad=False,
+        pickle=False)
+
+
+def bceloss_weights_no_reduce_test():
+    t = torch.randn(15, 10).gt(0).double()
+    weights = torch.rand(10)
+    return dict(
+        fullname='BCELoss_weights_no_reduce',
+        constructor=wrap_functional(
+            lambda i: F.binary_cross_entropy(i, Variable(t.type_as(i.data)),
+                                             weight=weights.type_as(i.data), reduce=False)),
+        input_fn=lambda: torch.rand(15, 10).clamp_(2e-2, 1 - 2e-2),
+        reference_fn=lambda i, m: -(t * i.log() + (1 - t) * (1 - i).log()) * weights,
+        check_gradgrad=False,
+        pickle=False)
 
 
 def kldivloss_no_reduce_test():
@@ -3975,7 +4126,7 @@ def nllloss2d_no_reduce_test():
             lambda i: F.nll_loss(i, t.type_as(i).long(), **kwargs)),
         input_fn=lambda: torch.rand(2, 3, 5, 5).log(),
         reference_fn=lambda i, _:
-            loss_reference_fns['NLLLoss2d'](i, t.type_as(i).long(), **kwargs),
+            loss_reference_fns['NLLLossNd'](i, t.type_as(i).long(), **kwargs),
         pickle=False)
 
 
@@ -3988,7 +4139,7 @@ def nllloss2d_no_reduce_ignore_index_test():
             lambda i: F.nll_loss(i, t.type_as(i).long(), **kwargs)),
         input_fn=lambda: torch.rand(2, 3, 5, 5).log(),
         reference_fn=lambda i, _:
-            loss_reference_fns['NLLLoss2d'](i, t.type_as(i).long(), **kwargs),
+            loss_reference_fns['NLLLossNd'](i, t.type_as(i).long(), **kwargs),
         pickle=False)
 
 
@@ -4005,7 +4156,50 @@ def nllloss2d_no_reduce_weights_test():
             lambda i: F.nll_loss(i, t.type_as(i).long(), **kwargs(i.data))),
         input_fn=lambda: torch.rand(2, 3, 5, 5).log(),
         reference_fn=lambda i, _:
-            loss_reference_fns['NLLLoss2d'](i, t.type_as(i).long(), **kwargs(i)),
+            loss_reference_fns['NLLLossNd'](i, t.type_as(i).long(), **kwargs(i)),
+        pickle=False)
+
+
+def nlllossNd_no_reduce_test():
+    t = Variable(torch.rand(2, 5, 5, 2, 2).mul(3).floor().long())
+    kwargs = {'reduce': False}
+    return dict(
+        fullname='NLLLossNd_no_reduce',
+        constructor=wrap_functional(
+            lambda i: F.nll_loss(i, t.type_as(i).long(), **kwargs)),
+        input_fn=lambda: torch.rand(2, 3, 5, 5, 2, 2).log(),
+        reference_fn=lambda i, _:
+            loss_reference_fns['NLLLossNd'](i, t.type_as(i).long(), **kwargs),
+        pickle=False)
+
+
+def nlllossNd_no_reduce_ignore_index_test():
+    t = Variable(torch.rand(2, 5, 5, 2, 2).mul(3).floor().long())
+    kwargs = {'ignore_index': 1, 'reduce': False}
+    return dict(
+        fullname='NLLLossNd_no_reduce_ignore_index',
+        constructor=wrap_functional(
+            lambda i: F.nll_loss(i, t.type_as(i).long(), **kwargs)),
+        input_fn=lambda: torch.rand(2, 3, 5, 5, 2, 2).log(),
+        reference_fn=lambda i, _:
+            loss_reference_fns['NLLLossNd'](i, t.type_as(i).long(), **kwargs),
+        pickle=False)
+
+
+def nlllossNd_no_reduce_weights_test():
+    t = Variable(torch.rand(2, 5, 5, 2, 2).mul(3).floor().long())
+    weight = torch.rand(3)
+
+    def kwargs(i):
+        return {'weight': weight.type_as(i), 'reduce': False}
+
+    return dict(
+        fullname='NLLLossNd_no_reduce_weights',
+        constructor=wrap_functional(
+            lambda i: F.nll_loss(i, t.type_as(i).long(), **kwargs(i.data))),
+        input_fn=lambda: torch.rand(2, 3, 5, 5, 2, 2).log(),
+        reference_fn=lambda i, _:
+            loss_reference_fns['NLLLossNd'](i, t.type_as(i).long(), **kwargs(i)),
         pickle=False)
 
 
@@ -4022,6 +4216,9 @@ def smoothl1loss_no_reduce_test():
 
 
 new_module_tests = [
+    poissonnllloss_no_reduce_test(),
+    bceloss_no_reduce_test(),
+    bceloss_weights_no_reduce_test(),
     kldivloss_no_reduce_test(),
     l1loss_no_reduce_test(),
     mseloss_no_reduce_test(),
@@ -4033,6 +4230,9 @@ new_module_tests = [
     nllloss2d_no_reduce_test(),
     nllloss2d_no_reduce_weights_test(),
     nllloss2d_no_reduce_ignore_index_test(),
+    nlllossNd_no_reduce_test(),
+    nlllossNd_no_reduce_weights_test(),
+    nlllossNd_no_reduce_ignore_index_test(),
     smoothl1loss_no_reduce_test(),
     dict(
         module_name='BatchNorm1d',

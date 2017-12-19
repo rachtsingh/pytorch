@@ -40,6 +40,7 @@ _(Scale) \
 _(Transpose) \
 _(Reshape) \
 _(split) \
+_(chunk) \
 _(Offset) \
 _(value) \
 _(Subgraph) \
@@ -122,7 +123,8 @@ _(sub) \
 _(tan) \
 _(trunc) \
 _(zeros) \
-_(exponent)
+_(exponent) \
+_(is_cuda)
 
 enum BuiltinSymbol {
   #define DEFINE_SYMBOL(s) \

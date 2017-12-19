@@ -85,6 +85,10 @@ class SELU(InplaceFunction):
     scale = 1.0507009873554804934193349852946
 
     @staticmethod
+    def symbolic(g, input, inplace):
+        return g.op("Selu", input)
+
+    @staticmethod
     def forward(ctx, input, inplace):
         backend = type2backend[type(input)]
         if inplace:
@@ -106,8 +110,8 @@ class SELU(InplaceFunction):
     @staticmethod
     def backward(ctx, grad_output):
         input, output = ctx.saved_variables
-        if grad_output.volatile:
-            grad_input = Variable(input.data.new(input.size()), volatile=True)
+        if not torch.is_grad_enabled():
+            grad_input = Variable(input.data.new(input.size()))
             backend = type2backend[type(input.data)]
             backend.ELU_updateGradInput(
                 backend.library_state,

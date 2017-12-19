@@ -9,9 +9,7 @@
 #include "torch/csrc/autograd/python_variable.h"
 #include "torch/csrc/autograd/python_engine.h"
 #include "torch/csrc/autograd/functions/special.h"
-#ifdef WITH_CUDA
 #include "torch/csrc/jit/fusion_compiler.h"
-#endif
 
 namespace py = pybind11;
 
@@ -62,17 +60,13 @@ struct HandleBuilder {
     }
   }
   autograd::Variable addInput(at::Retainable* input, const VariableFlags & flags_) {
-    // TODO: handle volatile correctly
     if(handle && flags_.requires_grad) {
-      autograd::VarFlags flags = {true, false};
       return autograd::make_variable(
         unsafeToTensorShare(input),
-        flags,
         handle->forward_inputs->num_inputs++,
         handle->forward_inputs);
     } else {
-      autograd::VarFlags flags = {false, false};
-      return autograd::make_variable(unsafeToTensorShare(input), flags);
+      return autograd::make_variable(unsafeToTensorShare(input));
     }
   }
   at::Retainable* addOutput(const autograd::Variable & output) {
@@ -176,12 +170,14 @@ Operation createEvalOperation(CppOp * op) {
       }
       return false; // stop output and do not run DummyFunction
     });
+    // TODO: handle create_graph appropriately
+    bool create_graph = true;
     // note: node handle_in->use_count() == 1 means that we are guarenteed that we have the only
     // only copy of the handle. This might make it seem it is ok to pass keep_graph=False.
     // However, it is possible for 'copied_next_fns' to grab functions used by _other_ handles,
     // and these functions will be executed in this run. Since these other handles
     // may still be alive, it is not safe to release the graph
-    engine.execute(handle_in->forward_outputs, v_inputs, true, callbacks);
+    engine.execute(handle_in->forward_outputs, v_inputs, true, create_graph, callbacks);
     builder.writeTo(outputs);
   };
 }
@@ -199,8 +195,7 @@ Operation getOperation(jit::Node *node) {
       return createCppOperation(value);
     }
   IR_ELSEIF(FusionGroup)
-#ifdef WITH_CUDA
-    auto fusion_fn = sharedFusionCompiler().getOrCompile(*value->g(kSubgraph));
+    auto fusion_fn = sharedFusionCompiler().getOrCompile(value);
     return [fusion_fn](const list_of_retainable & inputs, list_of_retainable & outputs) {
       autograd::profiler::RecordFunction record("FusionGroup");
       tensor_list tinputs, toutputs;
@@ -213,9 +208,6 @@ Operation getOperation(jit::Node *node) {
         outputs.push_back(toRetainableSteal(std::move(o)));
       }
     };
-#else
-    throw std::runtime_error("don't know how to execute FusionGroups without CUDA");
-#endif
   IR_ELSEIF(Constant)
     auto t = value->t(kvalue);
     return [t](const list_of_retainable & inputs, list_of_retainable & outputs) {
@@ -484,6 +476,13 @@ struct InterpreterStateImpl {
       outputs.clear();
       loadTensorsFromRegisters(stage.outputs, outputs);
   }
+  const TensorType & tensorTypeForInput(size_t i) const {
+    size_t graph_i = i;
+    for(size_t s = 0; s < current_stage; s++)
+      graph_i += function->stages[s].inputs.size;
+    JIT_ASSERTM(graph_i < function->graph->inputs().size(), "Input out of range");
+    return *function->graph->inputs().at(graph_i)->type()->expect<TensorType>();
+  }
   int get(const ListHandle<int> & list, int i) {
     return int_data[list.start + i];
   };
@@ -537,6 +536,9 @@ void InterpreterState::runOneStage(
   const std::vector<at::Tensor> & inputs,
   std::vector<at::Tensor> & outputs) {
     return pImpl->runOneStage(inputs, outputs);
+}
+const TensorType & InterpreterState::tensorTypeForInput(size_t i) const {
+  return pImpl->tensorTypeForInput(i);
 }
 InterpreterState InterpreterState::clone() const {
   return InterpreterState(new InterpreterStateImpl(*pImpl));

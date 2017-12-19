@@ -158,7 +158,6 @@ ELSE()
   MESSAGE(STATUS "MAGMA not found. Compiling without MAGMA support")
 ENDIF()
 
-
 # ARM specific flags
 FIND_PACKAGE(ARM)
 IF (ASIMD_FOUND)
@@ -334,11 +333,6 @@ IF(LAPACK_FOUND)
   SET(USE_LAPACK 1)
 ENDIF(LAPACK_FOUND)
 
-FIND_PACKAGE(CuDNN)
-IF(CUDNN_FOUND)
-  SET(USE_CUDNN 1)
-ENDIF(CUDNN_FOUND)
-
 #############################################
 
 set(ATen_CPU_SRCS)
@@ -372,14 +366,24 @@ add_subdirectory(src/THS)
 if(NO_CUDA)
   message("disabling CUDA because NO_CUDA is set")
   SET(CUDA_FLAG -n)
+  SET(AT_CUDA_ENABLED 0)
 else()
-  ADD_DEFINITIONS(-DAT_CUDA_ENABLED)
+  SET(AT_CUDA_ENABLED 1)
   INCLUDE_DIRECTORIES(${CUDA_INCLUDE_DIRS})
   find_package(CUDA 5.5 REQUIRED)
   add_subdirectory(src/THC)
   add_subdirectory(src/THCUNN)
   add_subdirectory(src/THCS)
 endif()
+
+find_package(CuDNN)
+IF(NOT AT_CUDA_ENABLED OR NOT CUDNN_FOUND)
+  MESSAGE(STATUS "CuDNN not found. Compiling without CUDNN support")
+  set(AT_CUDNN_ENABLED 0)
+ELSE()
+  INCLUDE_DIRECTORIES(${CUDNN_INCLUDE_DIRS})
+  set(AT_CUDNN_ENABLED 1)
+ENDIF()
 
 set(cwrap_files
   ${CMAKE_CURRENT_SOURCE_DIR}/src/ATen/Declarations.cwrap
@@ -397,6 +401,9 @@ add_subdirectory(src/ATen)
 include_directories(
 ${CMAKE_CURRENT_SOURCE_DIR}/src
 ${CMAKE_CURRENT_BINARY_DIR}/src/ATen)
+if(NOT NO_CUDA)
+  include_directories(${CUDA_INCLUDE_DIRS})
+endif()
 add_subdirectory(src/ATen/test)
 
 if(ATEN_NO_CONTRIB)

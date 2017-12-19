@@ -1,5 +1,6 @@
 import os
 import sys
+import glob
 
 source_files = set(['.py', '.cpp', '.h'])
 
@@ -16,10 +17,9 @@ def all_generator_source():
 
 inputs = [
     'torch/csrc/generic/TensorMethods.cwrap',
-    'torch/csrc/cudnn/cuDNN.cwrap',
     'torch/lib/tmp_install/share/ATen/Declarations.yaml',
-    'torch/lib/tmp_install/share/ATen/Declarations.yaml'
-]
+    'tools/autograd/derivatives.yaml',
+] + glob.glob('torch/csrc/generic/methods/*.cwrap')
 
 outputs = [
     'torch/csrc/autograd/generated/Functions.cpp',
@@ -56,7 +56,7 @@ def generate_code(ninja_global=None):
 
     # cwrap depends on pyyaml, so we can't import it earlier
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    sys.path.append(root)
+    sys.path.insert(0, root)
     from tools.cwrap import cwrap
     from tools.cwrap.plugins.THPPlugin import THPPlugin
     from tools.cwrap.plugins.ArgcountSortPlugin import ArgcountSortPlugin
@@ -65,7 +65,6 @@ def generate_code(ninja_global=None):
     from tools.cwrap.plugins.KwargsPlugin import KwargsPlugin
     from tools.cwrap.plugins.NullableArguments import NullableArguments
 
-    from tools.cwrap.plugins.CuDNNPlugin import CuDNNPlugin
     from tools.cwrap.plugins.WrapDim import WrapDim
     from tools.cwrap.plugins.AssertNDim import AssertNDim
 
@@ -79,9 +78,6 @@ def generate_code(ninja_global=None):
         ProcessorSpecificPlugin(), BoolOption(), thp_plugin,
         AutoGPU(condition='IS_CUDA'), ArgcountSortPlugin(), KwargsPlugin(),
         AssertNDim(), WrapDim(), Broadcast()
-    ])
-    cwrap('torch/csrc/cudnn/cuDNN.cwrap', plugins=[
-        CuDNNPlugin(), NullableArguments()
     ])
     # Build ATen based Variable classes
     autograd_gen_dir = 'torch/csrc/autograd/generated'

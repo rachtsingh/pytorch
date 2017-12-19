@@ -50,6 +50,11 @@ def send_tensor(queue, event, tp):
     event.wait()
 
 
+def call_backward():
+    x = torch.autograd.Variable(torch.randn(3, 3), requires_grad=True)
+    x.sum().backward()
+
+
 def sum_tensors(inq, outq):
     with torch.cuda.device(1):
         tensors = inq.get()
@@ -379,15 +384,9 @@ class TestMultiprocessing(TestCase):
         self.assertFalse(p.is_alive())
 
     def test_variable_sharing(self):
-        configs = [
-            (True, False),
-            (False, False),
-            (False, True),
-        ]
-        for requires_grad, volatile in configs:
+        for requires_grad in [True, False]:
             var = Variable(torch.arange(1, 26).view(5, 5),
-                           requires_grad=requires_grad,
-                           volatile=volatile)
+                           requires_grad=requires_grad)
             self._test_autograd_sharing(var)
 
     def test_parameter_sharing(self):
@@ -416,6 +415,14 @@ class TestMultiprocessing(TestCase):
     def test_is_shared_cuda(self):
         t = torch.randn(5, 5).cuda()
         self.assertTrue(t.is_shared())
+
+    def test_backwards_fork(self):
+        r"backwards() should succeed when called before and after a fork"
+        call_backward()
+        p = mp.Process(target=call_backward)
+        p.start()
+        p.join(1)
+        self.assertFalse(p.is_alive())
 
 
 if __name__ == '__main__':
