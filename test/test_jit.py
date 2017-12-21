@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from itertools import product
 from torch.autograd import Variable, Function
 from torch.autograd.function import traceable
-from common import TestCase, run_tests
+from common import TestCase, run_tests, IS_WINDOWS
 import io
 import sys
 
@@ -26,8 +26,6 @@ if torch.cuda.is_available():
         major = torch.cuda.get_device_capability(d)[0]
         if (CUDA_VERSION < 8000 and major >= 6) or (CUDA_VERSION < 9000 and major >= 7):
             RUN_CUDA = False
-
-IS_WINDOWS = sys.platform == "win32"
 
 
 def LSTMCell(input, hidden, w_ih, w_hh, b_ih=None, b_hh=None):
@@ -104,6 +102,7 @@ class TestJit(TestCase):
             z2 = fn(x, y)
         self.assertEqual(z, z2)
 
+    # index-2 is not implemented in interpreter
     @unittest.expectedFailure
     def test_index(self):
         x = Variable(torch.Tensor([0.4]), requires_grad=True)
@@ -117,6 +116,29 @@ class TestJit(TestCase):
         with self.assertCompiled(fn):
             z2 = fn(x, y)
         self.assertEqual(z, z2)
+
+    # Backwards tracing was broken for indexing by a constant,
+    # because it's internally implemented using as_strided,
+    # and we attempted to trace its derivative (which is not
+    # currently supported.)  It currently works because
+    # slice() is now not marked as traceable.
+    def test_index_constant(self):
+        x = Variable(torch.Tensor([0.4]), requires_grad=True)
+
+        @torch.jit.compile(nderivs=1)
+        def fn(x):
+            return x[0]
+
+        z = fn(x)
+        z.backward()
+        grad = x.grad.clone()
+        x.grad.zero_()
+        with self.assertCompiled(fn):
+            z2 = fn(x)
+            z2.backward()
+            grad2 = x.grad.clone()
+        self.assertEqual(z, z2)
+        self.assertEqual(grad, grad2)
 
     def test_scopes(self):
         x = Variable(torch.Tensor([0.4]), requires_grad=True)
@@ -295,6 +317,7 @@ class TestJit(TestCase):
         self.assertEqual(z, torch.sigmoid(torch.tanh(x * (x + y))))
         self.assertEqual(z, z2)
 
+    @unittest.skipIf(IS_WINDOWS, "NYI: fuser support for Windows")
     @unittest.skipIf(not RUN_CUDA, "fuser requires CUDA")
     def test_compile_addc(self):
         x = Variable(torch.Tensor([0.4]), requires_grad=True).float().cuda()
@@ -731,9 +754,9 @@ class TestJit(TestCase):
         grad_x.backward()
         self.assertTrue(fn.has_trace_for(x))
 
-        with self.assertRaisesRegex(RuntimeError, 'different flags'):
+        with self.assertRaisesRegex(RuntimeError, 'was compiled with'):
             fn(x).backward(Variable(torch.ones(1), requires_grad=True))
-        with self.assertRaisesRegex(RuntimeError, 'different flags'):
+        with self.assertRaisesRegex(RuntimeError, 'was compiled with'):
             grad_x, = torch.autograd.grad(fn(x), (x,), create_graph=True)
             grad_x.backward(Variable(torch.ones(1), requires_grad=True))
 
@@ -767,6 +790,7 @@ class TestJit(TestCase):
         assert(torch.equal(torch.ones([2, 2]), t_node.t("a")))
         self.assertExpected(str(g2))
 
+    @unittest.skipIf(IS_WINDOWS, "NYI: fuser support for Windows")
     @unittest.skipIf(not RUN_CUDA, "cpp tests require CUDA")
     def test_cpp(self):
         torch._C._jit_run_cpp_tests()
@@ -826,6 +850,35 @@ class TestJit(TestCase):
         r2 = F.linear(F.linear(input, weights), weights)
 
         self.assertEqual(r1, r2)
+
+    def test_unused_input(self):
+            @torch.jit.compile(nderivs=1)
+            def fn(a, b, c):
+                return a + b
+
+            a, b, c = [Variable(torch.randn(2, 2), requires_grad=True) for _ in range(3)]
+            fn(a, b, c).sum().backward()
+            with self.assertCompiled(fn):
+                fn(a, b, c).sum().backward()
+
+    def test_re_enter(self):
+            @torch.jit.compile(nderivs=1)
+            def fn(a, b):
+                return a + b
+
+            @torch.jit.compile(nderivs=1)
+            def fn2(a, b, c):
+                    return fn(a, b) + c
+
+            a, b, c = [Variable(torch.randn(2, 2), requires_grad=True) for _ in range(3)]
+
+            fn(a, b).sum().backward()
+            with self.assertCompiled(fn):
+                fn(a, b).sum().backward()
+
+            fn2(a, b, c).sum().backward()
+            with self.assertCompiled(fn2):
+                fn2(a, b, c).sum().backward()
 
     def test_mini_wlm(self):
         """Exercise null-edge pruning in the tracer."""
@@ -958,6 +1011,33 @@ class TestJit(TestCase):
         info_str = fn.jit_debug_info()
         self.assertTrue("hits: 100" in info_str)
         self.assertTrue("stage 1" in info_str)
+
+    # Inplace copies don't work with tracer yet.
+    # This is actually somewhat important to support correctly
+    # as all backwards functions of views are implemented
+    # as a zero filled tensor with a gradient fill on the
+    # viewed portion.
+    @unittest.expectedFailure
+    def test_inplace_copy(self):
+        x = Variable(torch.randn(4, 4), requires_grad=True)
+
+        def f(x):
+            out = Variable(torch.zeros(x.size()))
+            out.copy_(x)
+            return out
+
+        trace, z = torch.jit.trace(f, (x, ), nderivs=0)
+        torch._C._jit_pass_lint(trace)
+        torch._C._jit_pass_dce(trace)
+        self.assertExpectedTrace(trace)
+
+    def test_index_trace(self):
+        x = Variable(torch.randn(4, 4), requires_grad=True)
+        trace, z = torch.jit.trace(lambda x: x[0], (x, ), nderivs=1)
+        z.sum().backward()
+        torch._C._jit_pass_lint(trace)
+        torch._C._jit_pass_dce(trace)
+        self.assertExpectedTrace(trace)
 
 
 if __name__ == '__main__':

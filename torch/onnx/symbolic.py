@@ -1,6 +1,6 @@
 import torch
 from torch.autograd._functions.utils import check_onnx_broadcast  # TODO: move me
-from torch.nn.modules.utils import _pair, _triple
+from torch.nn.modules.utils import _single, _pair, _triple
 import warnings
 
 # EDITING THIS FILE? READ THIS FIRST!
@@ -281,6 +281,20 @@ def softplus(g, self, beta, threshold):
     return g.op('Softplus', self)
 
 
+def max_pool1d(g, input, kernel_size, stride, padding, dilation, ceil_mode):
+    if ceil_mode:
+        return _unimplemented("max_pool1d", "ceil_mode")
+    if set(_single(dilation)) != {1}:
+        return _unimplemented("max_pool1d", "dilation")
+    if stride is None:
+        stride = kernel_size
+    r = g.op("MaxPool", input,
+             kernel_shape_i=_single(kernel_size),
+             pads_i=_single(padding) * 2,
+             strides_i=_single(stride))
+    return r, None
+
+
 def max_pool2d(g, input, kernel_size, stride, padding, dilation, ceil_mode):
     if ceil_mode:
         return _unimplemented("max_pool2d", "ceil_mode")
@@ -319,8 +333,81 @@ def avg_pool3d(g, input, kernel_size, stride, padding, ceil_mode, count_include_
                 pads_i=_triple(padding))
 
 
+def reflection_pad(g, input, padding):
+    from torch.autograd._functions.utils import prepare_onnx_paddings
+    mode = "reflect"
+    paddings = prepare_onnx_paddings(len(input.type().sizes()), padding)
+    return g.op("Pad", input, pads_i=paddings, mode_s=mode)
+
+
+def replication_pad(g, input, padding):
+    from torch.autograd._functions.utils import prepare_onnx_paddings
+    mode = "edge"
+    paddings = prepare_onnx_paddings(len(input.type().sizes()), padding)
+    return g.op("Pad", input, pads_i=paddings, mode_s=mode)
+
+
+reflection_pad1d = reflection_pad
+reflection_pad2d = reflection_pad
+reflection_pad3d = reflection_pad
+replication_pad1d = replication_pad
+replication_pad2d = replication_pad
+replication_pad3d = replication_pad
+
+
+def upsample_nearest2d(g, input, scale_factor):
+    return g.op("Upsample", input, width_scale_f=scale_factor,
+                height_scale_f=scale_factor, mode_s="nearest")
+
+
 def log_softmax(g, input, dim=None):
     return g.op("Log", g.op('Softmax', input, axis_i=dim).setTypeAs(input))
+
+
+def _convolution(g, input, weight, bias, stride, padding, dilation,
+                 transposed, output_padding, groups, benchmark, deterministic, cudnn_enabled):
+    if any(o != 0 for o in output_padding):
+        return _unimplemented("_convolution", "non-zero output_padding")
+
+    weight_size = weight.type().sizes()
+
+    args = [input, weight]
+    # ONNX only supports 1D bias
+    if bias.node().kind() != "Undefined" and len(bias.type().sizes()) == 1:
+        args.append(bias)
+
+    kwargs = {"kernel_shape_i": weight_size[2:],
+              "strides_i": stride,
+              # NB: ONNX supports asymmetric padding, whereas PyTorch supports only
+              # symmetric padding
+              "pads_i": padding + padding,
+              "dilations_i": dilation,
+              "group_i": groups}
+
+    n = g.op("ConvTranspose" if transposed else "Conv", *args, **kwargs)
+
+    if bias.node().kind() != "Undefined" and len(bias.type().sizes()) != 1:
+        return g.op("Add", n, bias, broadcast_i=1, axis_i=1)
+    else:
+        return n
+
+
+def batch_norm(g, input, weight, bias, running_mean, running_var, training, momentum, eps, cudnn_enabled):
+    out = g.op("BatchNormalization", input, weight, bias, running_mean, running_var,
+               is_test_i=not training,
+               epsilon_f=eps,
+               momentum_f=1 - momentum,
+               consumed_inputs_i=(0, 0, 0, 1, 1),
+               outputs=1 if not training else 5)
+    if not training:
+        return out
+    else:
+        res, new_running_mean, new_running_var, saved_mean, saved_var = out
+        new_running_mean.setType(running_mean.type())
+        new_running_var.setType(running_var.type())
+        saved_mean.setUniqueName("batch_norm_dead_output-" + saved_mean.uniqueName())
+        saved_var.setUniqueName("batch_norm_dead_output-" + saved_var.uniqueName())
+        return res
 
 
 def unfold(g, input, dimension, size, step):
@@ -330,6 +417,10 @@ def unfold(g, input, dimension, size, step):
 def elu(g, input, alpha, inplace=False):
     # See Note [Export inplace]
     return g.op("Elu", input, alpha_f=_scalar(alpha))
+
+
+def selu(g, input):
+    return g.op("Selu", input)
 
 
 def index_select(g, self, index, dim):

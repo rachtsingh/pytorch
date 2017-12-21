@@ -74,11 +74,6 @@ ${return_type} ${Type}::${api_name}(${formals}) const {
     ${return_call} at::native::${native_type_method_dispatch}(${actuals});
 }
 """)
-TYPE_DERIVED_DEFINITION_NATIVE_TEMPLATE_SCALAR = CodeTemplate("""\
-${return_type} ${Type}::${api_name}(${formals}) const {
-    ${return_call} at::native::${native_type_method_dispatch}<${ScalarType}>(${actuals});
-}
-""")
 
 # 6. add non-virtual declaration to Tensor.h
 TENSOR_METHOD_DECLARATION = CodeTemplate("""\
@@ -103,10 +98,6 @@ static inline ${return_type} ${api_name}(${formals}) {
 # 10. add a native declaration for a native function
 NATIVE_DECLARATION = CodeTemplate("""\
 ${return_type} ${native_type_method_dispatch}(${formals_with_defaults});
-""")
-
-NATIVE_TEMPLATE_SCALAR_DECLARATION = CodeTemplate("""\
-template <typename scalartype> ${return_type} ${native_type_method_dispatch}(${formals_with_defaults});
 """)
 
 # We need to cast to the base type because C++ may hide the base class
@@ -182,6 +173,8 @@ TYPE_RETURN = {
     'THBoolTensor*': 'Tensor',
     'THIntegerTensor*': 'Tensor',
     'THSTensor*': 'Tensor',
+    'THDenseTensor*': 'Tensor',
+    'THDenseIndexTensor*': 'Tensor',
     'real': 'Tensor',
     'accreal': 'Tensor',
     'long': 'int64_t',
@@ -230,11 +223,13 @@ CHECKED_USE = {
 CHECKED_USE_NULLABLE = CodeTemplate('${arg_name}_ ? ${usage} : NULL')
 
 ALLOC_WRAP = {
-    'THTensor*': 'new ${Tensor}(context)',
-    'THBoolTensor*': 'new ${Backend}ByteTensor(context)',
-    'THIndexTensor*': 'new ${Backend}LongTensor(context)',
-    'THIntegerTensor*': 'new ${Backend}IntTensor(context)',
-    'THSTensor*': 'new Sparse${Tensor}(context)',
+    'THTensor*': 'new ${Tensor}(context${,arguments})',
+    'THBoolTensor*': 'new ${Backend}ByteTensor(context${,arguments})',
+    'THIndexTensor*': 'new ${Backend}LongTensor(context${,arguments})',
+    'THIntegerTensor*': 'new ${Backend}IntTensor(context${,arguments})',
+    'THSTensor*': 'new Sparse${Tensor}(context${,arguments})',
+    'THDenseTensor*': 'new ${DenseTensor}(context${,arguments})',
+    'THDenseIndexTensor*': 'new ${DenseBackend}LongTensor(context${,arguments})',
 }
 
 # Replacements for constants when calling into TH
@@ -570,10 +565,16 @@ def create_generic(top_env, declarations):
 
         # ensure we get reference-type formals when appropriate
         def native_translate_formals(argument, option):
+            def translate_map(const):
+                return {
+                    'Tensor': 'const Tensor &' if const else 'Tensor &',
+                    'BoolTensor': 'const Tensor &' if const else 'Tensor &'
+                }
+
             if (option['inplace'] and argument['name'] == 'self') or argument.get('output', False):
-                argument['type'] = {'Tensor': 'Tensor &'}.get(argument['type'], argument['type'])
+                argument['type'] = translate_map(False).get(argument['type'], argument['type'])
             else:
-                argument['type'] = {'Tensor': 'const Tensor &'}.get(argument['type'], argument['type'])
+                argument['type'] = translate_map(True).get(argument['type'], argument['type'])
 
             return argument
 
@@ -648,7 +649,6 @@ def create_generic(top_env, declarations):
         top_env['type_method_declarations'].append(
             TYPE_METHOD_DECLARATION_CONCRETE.substitute(env))
         dispatch = option['type_method_definition_dispatch']
-        template_scalar = option.get('template_scalar')
         option['native_type_method_dispatch'] = dispatch
 
         # Note [Abstract ATen methods]
@@ -659,7 +659,7 @@ def create_generic(top_env, declarations):
         # method is one which has the same dispatch for all types;
         # we just implement it in the base Type.  This is exposed
         # in Declarations.yaml via a field named 'abstract'.
-        if isinstance(dispatch, dict) or template_scalar:
+        if isinstance(dispatch, dict):
             abstract = True
             top_env['type_method_definitions'].append(
                 TYPE_METHOD_DEFINITION_ABSTRACT.substitute(env))
@@ -667,9 +667,6 @@ def create_generic(top_env, declarations):
             abstract = False
             top_env['type_method_definitions'].append(
                 TYPE_METHOD_DEFINITION_CONCRETE.substitute(env))
-
-        def native_decl():
-            return NATIVE_TEMPLATE_SCALAR_DECLARATION if template_scalar else NATIVE_DECLARATION
 
         # generate the at::native function declarations (i.e. what the user will implement)
         if isinstance(dispatch, dict):
@@ -679,11 +676,11 @@ def create_generic(top_env, declarations):
                 if value not in generated_native_functions:
                     option['native_type_method_dispatch'] = value
                     top_env['native_function_declarations'].append(
-                        native_decl().substitute(env))
+                        NATIVE_DECLARATION.substitute(env))
                     generated_native_functions.append(value)
         else:
             top_env['native_function_declarations'].append(
-                native_decl().substitute(env))
+                NATIVE_DECLARATION.substitute(env))
 
         method_of = ['Type']
         if is_method:
@@ -835,7 +832,7 @@ def create_derived(backend_type_env, declarations):
 
     def allocate_arg(env, arg, output_count):
         name = arg['name']
-        allocation = CodeTemplate(ALLOC_WRAP[arg['type']]).substitute(env)
+        allocation = CodeTemplate(ALLOC_WRAP[arg['type']]).substitute(env, arguments=[])
         tensor_arg = '{}_'.format(name)
         if arg.get('mask', False):
             allocation = 'output_mask[{}] ? {} : nullptr'.format(output_count, allocation)
@@ -1031,13 +1028,21 @@ def create_derived(backend_type_env, declarations):
         elif ret['kind'] == 'type':
             assert len(calls) == 1
             call = calls[0]
-            if ret['type'] == 'THTensor*':
+            if 'aten_custom_call' in option:
+                # all aten_custom_call bodies handle settings on their own.
+                scalar_check = None
+                body.append(CodeTemplate(
+                    option['aten_custom_call']).substitute(env))
+
+            if ret['type'] in ALLOC_WRAP.keys():
                 maybe_scalar = "->maybeScalar({})".format(scalar_check) \
                                if scalar_check is not None \
                                else ""
-                return_tensor = "return Tensor((new ${Tensor}(context,${arg_name}))${maybe_scalar},false);"
+                wrapped_tensor = CodeTemplate(ALLOC_WRAP[ret['type']]).substitute(
+                    env, arguments=[call])
+                return_tensor = "return Tensor((${wrapped_tensor})${maybe_scalar},false);"
                 body.append(CodeTemplate(return_tensor).substitute(
-                    env, arg_name=call, maybe_scalar=maybe_scalar))
+                    env, wrapped_tensor=wrapped_tensor, maybe_scalar=maybe_scalar))
             # return the same underlying Tensor type for both real and accreal; this ensures
             # e.g. x.sum(0) and x.sum() return the same type.
             elif ret['type'] == 'accreal' or ret['type'] == 'real':
@@ -1065,7 +1070,6 @@ def create_derived(backend_type_env, declarations):
 
     def process_native(option):
         dispatch = option['type_method_definition_dispatch']
-        template_scalar = option.get('template_scalar')
         env = nested_dict(option, backend_type_env)
 
         if isinstance(dispatch, dict):
@@ -1079,17 +1083,8 @@ def create_derived(backend_type_env, declarations):
                 option['native_type_method_dispatch'] = native_dispatch
                 type_object_declarations.append(
                     TYPE_DERIVED_DECLARATION.substitute(env))
-                if template_scalar:
-                    type_object_definitions.append(
-                        TYPE_DERIVED_DEFINITION_NATIVE_TEMPLATE_SCALAR.substitute(env))
-                else:
-                    type_object_definitions.append(
-                        TYPE_DERIVED_DEFINITION_NATIVE.substitute(env))
-        elif template_scalar:
-            type_object_declarations.append(
-                TYPE_DERIVED_DECLARATION.substitute(env))
-            type_object_definitions.append(
-                TYPE_DERIVED_DEFINITION_NATIVE_TEMPLATE_SCALAR.substitute(env))
+                type_object_definitions.append(
+                    TYPE_DERIVED_DEFINITION_NATIVE.substitute(env))
 
     for declaration in declarations:
         for option in declaration['options']:

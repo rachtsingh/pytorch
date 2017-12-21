@@ -5,6 +5,7 @@
 #include "torch/csrc/autograd/variable.h"
 #include "torch/csrc/jit/tracer.h"
 #include "torch/csrc/jit/passes/dead_code_elimination.h"
+#include "torch/csrc/jit/passes/common_subexpression_elimination.h"
 #include "torch/csrc/jit/passes/peephole.h"
 #include "torch/csrc/jit/passes/graph_fuser.h"
 #include "torch/csrc/jit/passes/inplace_check.h"
@@ -80,6 +81,7 @@ struct CompiledFunction {
       if (fn_.optimize_) {
         PeepholeOptimize(complete_trace->graph);
         FuseGraph(complete_trace->graph);
+        EliminateCommonSubexpression(complete_trace->graph);
       }
       factory_ = std::make_shared<InterpreterFunctionFactory>(complete_trace.get());
       graph_ = complete_trace->graph;
@@ -147,11 +149,24 @@ struct CompiledFunction {
     return args;
   }
 
+  py::object fallback(py::handle pyargs) {
+    return steal(PyObject_CallObject(function_.get(), pyargs.ptr()));
+  }
+
   py::object call(py::handle pyargs) {
     if (!enabled_) {
-      return steal(PyObject_CallObject(function_.get(), pyargs.ptr()));
+      return fallback(pyargs);
     }
     auto args = flattenArgs(pyargs);
+
+    if(isTracingVar(args.vars)) {
+      // Some outer compiled function has called another compiled function.
+      // In this case we just fall back to the original python function,
+      // allowing the inner trace to be inlined into the outer.
+      // This scenario occurs when blocking an lstm loop.
+      return fallback(pyargs);
+    }
+
     auto& ktrace = getTrace(args);
 
     variable_list out_vars;
@@ -238,7 +253,7 @@ CompiledFunction::TraceForKey* getTraceFor(CompiledFunction& fn,
 
 static py::tuple tuple_tail(const py::tuple & tup) {
   py::tuple r(tup.size() - 1);
-  for(int i = 1; i < tup.size(); i++) {
+  for(std::size_t i = 1; i < tup.size(); i++) {
     r[i-1] = tup[i];
   }
   return r;

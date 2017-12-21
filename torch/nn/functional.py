@@ -16,7 +16,7 @@ from torch.autograd import Variable
 from .modules.utils import _single, _pair, _triple
 
 # Convolutions
-_ConvNd = torch._C._functions.ConvNd
+_ConvNd = torch._C._VariableBase._convolution
 
 
 def conv1d(input, weight, bias=None, stride=1, padding=0, dilation=1,
@@ -48,10 +48,10 @@ def conv1d(input, weight, bias=None, stride=1, padding=0, dilation=1,
     if input is not None and input.dim() != 3:
         raise ValueError("Expected 3D tensor as input, got {}D tensor instead.".format(input.dim()))
 
-    f = _ConvNd(_single(stride), _single(padding), _single(dilation), False,
-                _single(0), groups, torch.backends.cudnn.benchmark,
-                torch.backends.cudnn.deterministic, torch.backends.cudnn.enabled)
-    return f(input, weight, bias)
+    return _ConvNd(input, weight, bias,
+                   _single(stride), _single(padding), _single(dilation), False,
+                   _single(0), groups, torch.backends.cudnn.benchmark,
+                   torch.backends.cudnn.deterministic, torch.backends.cudnn.enabled)
 
 
 def conv2d(input, weight, bias=None, stride=1, padding=0, dilation=1,
@@ -84,10 +84,9 @@ def conv2d(input, weight, bias=None, stride=1, padding=0, dilation=1,
     if input is not None and input.dim() != 4:
         raise ValueError("Expected 4D tensor as input, got {}D tensor instead.".format(input.dim()))
 
-    f = _ConvNd(_pair(stride), _pair(padding), _pair(dilation), False,
-                _pair(0), groups, torch.backends.cudnn.benchmark,
-                torch.backends.cudnn.deterministic, torch.backends.cudnn.enabled)
-    return f(input, weight, bias)
+    return _ConvNd(input, weight, bias, _pair(stride), _pair(padding), _pair(dilation), False,
+                   _pair(0), groups, torch.backends.cudnn.benchmark,
+                   torch.backends.cudnn.deterministic, torch.backends.cudnn.enabled)
 
 
 def conv3d(input, weight, bias=None, stride=1, padding=0, dilation=1,
@@ -120,10 +119,10 @@ def conv3d(input, weight, bias=None, stride=1, padding=0, dilation=1,
     if input is not None and input.dim() != 5:
         raise ValueError("Expected 5D tensor as input, got {}D tensor instead.".format(input.dim()))
 
-    f = _ConvNd(_triple(stride), _triple(padding), _triple(dilation), False,
-                _triple(0), groups, torch.backends.cudnn.benchmark,
-                torch.backends.cudnn.deterministic, torch.backends.cudnn.enabled)
-    return f(input, weight, bias)
+    return _ConvNd(input, weight, bias,
+                   _triple(stride), _triple(padding), _triple(dilation), False,
+                   _triple(0), groups, torch.backends.cudnn.benchmark,
+                   torch.backends.cudnn.deterministic, torch.backends.cudnn.enabled)
 
 
 def conv_transpose1d(input, weight, bias=None, stride=1, padding=0,
@@ -152,11 +151,10 @@ def conv_transpose1d(input, weight, bias=None, stride=1, padding=0,
     if input is not None and input.dim() != 3:
         raise ValueError("Expected 3D tensor as input, got {}D tensor instead.".format(input.dim()))
 
-    f = _ConvNd(_single(stride), _single(padding), _single(dilation), True,
-                _single(output_padding),
-                groups, torch.backends.cudnn.benchmark, torch.backends.cudnn.deterministic,
-                torch.backends.cudnn.enabled)
-    return f(input, weight, bias)
+    return _ConvNd(input, weight, bias, _single(stride), _single(padding), _single(dilation), True,
+                   _single(output_padding),
+                   groups, torch.backends.cudnn.benchmark, torch.backends.cudnn.deterministic,
+                   torch.backends.cudnn.enabled)
 
 
 def conv_transpose2d(input, weight, bias=None, stride=1, padding=0,
@@ -186,10 +184,10 @@ def conv_transpose2d(input, weight, bias=None, stride=1, padding=0,
     if input is not None and input.dim() != 4:
         raise ValueError("Expected 4D tensor as input, got {}D tensor instead.".format(input.dim()))
 
-    f = _ConvNd(_pair(stride), _pair(padding), _pair(dilation), True,
-                _pair(output_padding), groups, torch.backends.cudnn.benchmark,
-                torch.backends.cudnn.deterministic, torch.backends.cudnn.enabled)
-    return f(input, weight, bias)
+    return _ConvNd(input, weight, bias,
+                   _pair(stride), _pair(padding), _pair(dilation), True,
+                   _pair(output_padding), groups, torch.backends.cudnn.benchmark,
+                   torch.backends.cudnn.deterministic, torch.backends.cudnn.enabled)
 
 
 def conv_transpose3d(input, weight, bias=None, stride=1, padding=0,
@@ -218,10 +216,10 @@ def conv_transpose3d(input, weight, bias=None, stride=1, padding=0,
     if input is not None and input.dim() != 5:
         raise ValueError("Expected 5D tensor as input, got {}D tensor instead.".format(input.dim()))
 
-    f = _ConvNd(_triple(stride), _triple(padding), _triple(dilation), True,
-                _triple(output_padding), groups, torch.backends.cudnn.benchmark,
-                torch.backends.cudnn.deterministic, torch.backends.cudnn.enabled)
-    return f(input, weight, bias)
+    return _ConvNd(input, weight, bias,
+                   _triple(stride), _triple(padding), _triple(dilation), True,
+                   _triple(output_padding), groups, torch.backends.cudnn.benchmark,
+                   torch.backends.cudnn.deterministic, torch.backends.cudnn.enabled)
 
 
 def conv_tbc(input, weight, bias, pad=0):
@@ -332,8 +330,7 @@ def max_pool1d(input, kernel_size, stride=None, padding=0, dilation=1,
 
     See :class:`~torch.nn.MaxPool1d` for details.
     """
-    ret = _functions.thnn.MaxPool1d.apply(input, kernel_size, stride, padding, dilation,
-                                          ceil_mode)
+    ret = torch._C._VariableBase.max_pool1d(input, kernel_size, stride, padding, dilation, ceil_mode)
     return ret if return_indices else ret[0]
 
 
@@ -355,8 +352,7 @@ def max_pool3d(input, kernel_size, stride=None, padding=0, dilation=1,
 
     See :class:`~torch.nn.MaxPool2d` for details.
     """
-    ret = _functions.thnn.MaxPool3d.apply(input, kernel_size, stride, padding, dilation,
-                                          ceil_mode)
+    ret = torch._C._nn.max_pool3d(input, kernel_size, stride, padding, dilation, ceil_mode)
     return ret if return_indices else ret[0]
 
 
@@ -461,7 +457,7 @@ def adaptive_max_pool1d(input, output_size, return_indices=False):
         output_size: the target output size (single integer)
         return_indices: whether to return pooling indices. Default: ``False``
     """
-    ret = _functions.thnn.AdaptiveMaxPool1d.apply(input, output_size)
+    ret = torch._C._VariableBase.adaptive_max_pool1d(input, output_size)
     return ret if return_indices else ret[0]
 
 
@@ -476,7 +472,7 @@ def adaptive_max_pool2d(input, output_size, return_indices=False):
             double-integer tuple)
         return_indices: whether to return pooling indices. Default: ``False``
     """
-    ret = _functions.thnn.AdaptiveMaxPool2d.apply(input, output_size)
+    ret = torch._C._nn.adaptive_max_pool2d(input, output_size)
     return ret if return_indices else ret[0]
 
 
@@ -491,46 +487,47 @@ def adaptive_max_pool3d(input, output_size, return_indices=False):
             triple-integer tuple)
         return_indices: whether to return pooling indices. Default: ``False``
     """
-    ret = _functions.thnn.AdaptiveMaxPool3d.apply(input, output_size)
+    ret = torch._C._nn.adaptive_max_pool3d(input, output_size)
     return ret if return_indices else ret[0]
 
 
-def adaptive_avg_pool1d(input, output_size):
-    r"""Applies a 1D adaptive average pooling over an input signal composed of
-    several input planes.
+adaptive_avg_pool1d = _add_docstr(torch._C._VariableBase.adaptive_avg_pool1d, r"""
+adaptive_avg_pool1d(input, output_size) -> Variable
 
-    See :class:`~torch.nn.AdaptiveAvgPool1d` for details and output shape.
+Applies a 1D adaptive average pooling over an input signal composed of
+several input planes.
 
-    Args:
-        output_size: the target output size (single integer)
-    """
-    return _functions.thnn.AdaptiveAvgPool1d.apply(input, output_size)
+See :class:`~torch.nn.AdaptiveAvgPool1d` for details and output shape.
 
+Args:
+    output_size: the target output size (single integer)
+""")
 
-def adaptive_avg_pool2d(input, output_size):
-    r"""Applies a 2D adaptive average pooling over an input signal composed of
-    several input planes.
+adaptive_avg_pool2d = _add_docstr(torch._C._nn.adaptive_avg_pool2d, r"""
+adaptive_avg_pool2d(input, output_size) -> Variable
 
-    See :class:`~torch.nn.AdaptiveAvgPool2d` for details and output shape.
+Applies a 2D adaptive average pooling over an input signal composed of
+several input planes.
 
-    Args:
-        output_size: the target output size (single integer or
-            double-integer tuple)
-    """
-    return _functions.thnn.AdaptiveAvgPool2d.apply(input, output_size)
+See :class:`~torch.nn.AdaptiveAvgPool2d` for details and output shape.
 
+Args:
+    output_size: the target output size (single integer or
+        double-integer tuple)
+""")
 
-def adaptive_avg_pool3d(input, output_size):
-    r"""Applies a 3D adaptive average pooling over an input signal composed of
-    several input planes.
+adaptive_avg_pool3d = _add_docstr(torch._C._nn.adaptive_avg_pool3d, r"""
+adaptive_avg_pool3d(input, output_size) -> Variable
 
-    See :class:`~torch.nn.AdaptiveAvgPool3d` for details and output shape.
+Applies a 3D adaptive average pooling over an input signal composed of
+several input planes.
 
-    Args:
-        output_size: the target output size (single integer or
-            triple-integer tuple)
-    """
-    return _functions.thnn.AdaptiveAvgPool3d.apply(input, output_size)
+See :class:`~torch.nn.AdaptiveAvgPool3d` for details and output shape.
+
+Args:
+    output_size: the target output size (single integer or
+        triple-integer tuple)
+""")
 
 
 # Activation functions
@@ -685,7 +682,15 @@ def selu(input, inplace=False):
 
     See :class:`~torch.nn.SELU` for more details.
     """
-    return _functions.thnn.SELU.apply(input, inplace)
+    if inplace:
+        return torch._C._VariableBase.selu_(input)
+    return torch._C._VariableBase.selu(input)
+
+selu_ = _add_docstr(torch._C._VariableBase.selu_, r"""
+selu_(input) -> Variable
+
+In-place verison of :func:`~selu`.
+""")
 
 
 def leaky_relu(input, negative_slope=0.01, inplace=False):
@@ -849,14 +854,13 @@ def log_softmax(input, dim=None, _stacklevel=3):
     return torch._C._nn.log_softmax(input, dim)
 
 
-def softshrink(input, lambd=0.5):
-    r"""softshrink(input, lambd=0.5) -> Variable
+softshrink = _add_docstr(torch._C._nn.softshrink, r"""
+softshrink(input, lambd=0.5) -> Variable
 
-    Applies the soft shrinkage function elementwise
+Applies the soft shrinkage function elementwise
 
-    See :class:`~torch.nn.Softshrink` for more details.
-    """
-    return _functions.thnn.auto.Softshrink.apply(input, lambd)
+See :class:`~torch.nn.Softshrink` for more details.
+""")
 
 
 def tanh(input):
@@ -1072,8 +1076,10 @@ def batch_norm(input, running_mean, running_var, weight=None, bias=None,
         size = list(input.size())
         if reduce(mul, size[2:], size[0]) == 1:
             raise ValueError('Expected more than 1 value per channel when training, got input size {}'.format(size))
-    f = torch._C._functions.BatchNorm(running_mean, running_var, training, momentum, eps, torch.backends.cudnn.enabled)
-    return f(input, weight, bias)
+    return torch._C._VariableBase.batch_norm(
+        input, weight, bias,
+        Variable(running_mean), Variable(running_var), training, momentum, eps, torch.backends.cudnn.enabled
+    )
 
 
 # loss
@@ -1464,14 +1470,51 @@ def upsample(input, size=None, scale_factor=None, mode='nearest'):
         mode (string): algorithm used for upsampling:
             'nearest' | 'linear' | 'bilinear' | 'trilinear'. Default: 'nearest'
     """
+    from numbers import Integral
+    from .modules.utils import _ntuple
+
+    def _check_size_scale_factor():
+        if size is None and scale_factor is None:
+            raise ValueError('either size or scale_factor should be defined')
+        if size is not None and scale_factor is not None:
+            raise ValueError('only one of size or scale_factor should be defined')
+        if scale_factor is not None and not isinstance(scale_factor, (Integral, tuple)):
+            raise ValueError('scale_factor must be of integer type or a tuple of integer types')
+
+    def _scale_factor(dim):
+        _check_size_scale_factor()
+        if scale_factor is not None and not isinstance(scale_factor, Integral):
+            raise ValueError('scale_factor must be a single Integer value for nearest neighbor sampling')
+        if scale_factor is not None:
+            return scale_factor
+        sizes = _ntuple(dim)(size)
+        computed_scale_factor = sizes[0] // input.size(2)
+        for d in range(dim):
+            if sizes[d] % input.size(d + 2) != 0:
+                raise RuntimeError("output size specified in UpsamplingNearest "
+                                   "({}) has to be divisible by the input size, but got: "
+                                   "{}".format('x'.join(map(str, sizes)),
+                                               'x'.join(map(str, input.size()))))
+            if sizes[d] // input.size(d + 2) != computed_scale_factor:
+                raise RuntimeError("input aspect ratio doesn't match the output ratio")
+
+        return computed_scale_factor
+
+    def _output_size(dim):
+        _check_size_scale_factor()
+        if size is not None:
+            return size
+        scale_factors = _ntuple(dim)(scale_factor)
+        return [input.size(i + 2) * scale_factors[i] for i in range(dim)]
+
     if input.dim() == 3 and mode == 'nearest':
-        return _functions.thnn.UpsamplingNearest1d.apply(input, _single(size), scale_factor)
+        return torch._C._nn.upsample_nearest1d(input, _scale_factor(1))
     elif input.dim() == 4 and mode == 'nearest':
-        return _functions.thnn.UpsamplingNearest2d.apply(input, _pair(size), scale_factor)
+        return torch._C._nn.upsample_nearest2d(input, _scale_factor(2))
     elif input.dim() == 5 and mode == 'nearest':
-        return _functions.thnn.UpsamplingNearest3d.apply(input, _triple(size), scale_factor)
+        return torch._C._nn.upsample_nearest3d(input, _scale_factor(3))
     elif input.dim() == 3 and mode == 'linear':
-        return _functions.thnn.UpsamplingLinear1d.apply(input, _single(size), scale_factor)
+        return torch._C._nn.upsample_linear1d(input, _output_size(1))
     elif input.dim() == 3 and mode == 'bilinear':
         raise NotImplementedError("Got 3D input, but bilinear mode needs 4D input")
     elif input.dim() == 3 and mode == 'trilinear':
@@ -1479,7 +1522,7 @@ def upsample(input, size=None, scale_factor=None, mode='nearest'):
     elif input.dim() == 4 and mode == 'linear':
         raise NotImplementedError("Got 4D input, but linear mode needs 3D input")
     elif input.dim() == 4 and mode == 'bilinear':
-        return _functions.thnn.UpsamplingBilinear2d.apply(input, _pair(size), scale_factor)
+        return torch._C._nn.upsample_bilinear2d(input, _output_size(2))
     elif input.dim() == 4 and mode == 'trilinear':
         raise NotImplementedError("Got 4D input, but trilinear mode needs 5D input")
     elif input.dim() == 5 and mode == 'linear':
@@ -1487,7 +1530,7 @@ def upsample(input, size=None, scale_factor=None, mode='nearest'):
     elif input.dim() == 5 and mode == 'bilinear':
         raise NotImplementedError("Got 5D input, but bilinear mode needs 4D input")
     elif input.dim() == 5 and mode == 'trilinear':
-        return _functions.thnn.UpsamplingTrilinear3d.apply(input, _triple(size), scale_factor)
+        return torch._C._nn.upsample_trilinear3d(input, _output_size(3))
     else:
         raise NotImplementedError("Input Error: Only 3D, 4D and 5D input Tensors supported"
                                   " (got {}D) for the modes: nearest | linear | bilinear | trilinear"
@@ -1628,21 +1671,21 @@ def pad(input, pad, mode='constant', value=0):
     elif input.dim() == 3:
         assert len(pad) == 2, '3D tensors expect 2 values for padding'
         if mode == 'reflect':
-            return _functions.thnn.ReflectionPad1d.apply(input, *pad)
+            return torch._C._nn.reflection_pad1d(input, pad)
         elif mode == 'replicate':
-            return _functions.thnn.ReplicationPad1d.apply(input, *pad)
+            return torch._C._nn.replication_pad1d(input, pad)
     elif input.dim() == 4:
         assert len(pad) == 4, '4D tensors expect 4 values for padding'
         if mode == 'reflect':
-            return _functions.thnn.ReflectionPad2d.apply(input, *pad)
+            return torch._C._nn.reflection_pad2d(input, pad)
         elif mode == 'replicate':
-            return _functions.thnn.ReplicationPad2d.apply(input, *pad)
+            return torch._C._nn.replication_pad2d(input, pad)
     elif input.dim() == 5:
         assert len(pad) == 6, '5D tensors expect 6 values for padding'
         if mode == 'reflect':
             raise NotImplementedError
         elif mode == 'replicate':
-            return _functions.thnn.ReplicationPad3d.apply(input, *pad)
+            return torch._C._nn.replication_pad3d(input, pad)
     else:
         raise NotImplementedError("Only 3D, 4D, 5D padding with non-constant padding are supported for now")
 

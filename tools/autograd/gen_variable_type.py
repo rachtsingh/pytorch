@@ -67,8 +67,8 @@ UNPACK_TENSOR = CodeTemplate("""\
 auto${ref} ${arg_name}_ = unpack${suffix}(${arg_name}, "${arg_name}", ${arg_pos});""")
 
 FUNCTION_DECLARATION = CodeTemplate("""\
-struct ${op} : public TraceableFunction {
-  using TraceableFunction::TraceableFunction;
+struct ${op} : public ${superclass} {
+  using ${superclass}::${superclass};
   variable_list apply(const variable_list& grads) override;
   std::string name() override { return "${op}"; }
   void releaseVariables() override {
@@ -130,6 +130,12 @@ increment_version(self);
 return self;
 """)
 
+# XXX: the order of definitions here is actually very important, even when it's not
+# visible at first glance. The non-obvious invariants are:
+# - set_flags has to appear after version_counter, because rebase_history requires
+#   that the counter is incremented before it is called
+# - record_trace has to appear before save_outputs, because the saved variables
+#   should have their trace set correctly
 METHOD_DEFINITION_BODY_DERIVATIVE = CodeTemplate("""\
 profiler::RecordFunction profiler("${name}");
 ${unpack_args}
@@ -216,7 +222,7 @@ FALLTHROUGH_RETURN_TYPES = {'int64_t', 'void*', 'bool', 'IntList'}
 FALLTHROUGH_FUNCTIONS = {
     'arange', 'eye', 'linspace', 'logspace', 'tensor', 'ones', 'ones_like',
     'rand', 'randn', 'randperm', 'range', 'tensor', 'zeros',
-    'zeros_like', 'set_',
+    'zeros_like', 'set_', '_indices', '_values',
     # these are only implemented on integral types
     '__and__', '__iand__', '__ilshift__', '__ior__', '__irshift__', '__ixor__',
     '__lshift__', '__or__', '__rshift__', '__xor__',
@@ -233,6 +239,13 @@ SKIP_PYTHON_BINDINGS = [
     'alias', 'contiguous', 'clamp.*', 'is_cuda', 'size', 'stride',
     '.*_backward'
 ]
+# These functions have backwards which cannot be traced, and so must have
+# their backward functions traced opaquely.
+# VIEW_FUNCTIONS are not traceable because they use as_strided, which
+# has an untraceable backwards, see
+# https://github.com/pytorch/pytorch/issues/4250
+# TODO: This is probably not exhaustive, but it's a start
+UNTRACEABLE_FUNCTIONS = VIEW_FUNCTIONS
 
 # Matches "foo" in "foo, bar" but not "foobar". Used to search for the
 # occurence of a parameter in the derivative formula
@@ -495,8 +508,10 @@ def load_derivatives(path, declarations_by_signature, declarations_by_name):
 
         declarations = declarations_by_signature[signature]
         if len(declarations) == 0:
-            warnings.warn('no ATen declaration found for: {}'.format(signature))
-            continue
+            avail = [k for k, v in declarations_by_signature.items()
+                     if k.startswith(defn_name + '(') and len(v) > 0]
+            raise RuntimeError('no ATen declaration found for: {}.  '
+                               'Available signatures: {}'.format(signature, ', '.join(avail)))
         canonical = canonical_declaration(declarations, defn_name)
 
         # TODO: Check the types line up
@@ -611,6 +626,10 @@ def create_autograd_functions(top_env, autogen_functions):
             body.append(emit_derivative(derivative))
 
         env['body'] = body
+        if func['name'] in UNTRACEABLE_FUNCTIONS:
+            env['superclass'] = 'Function'
+        else:
+            env['superclass'] = 'TraceableFunction'
         env = nested_dict(env, func)
         function_declarations.append(FUNCTION_DECLARATION.substitute(env))
         function_definitions.append(FUNCTION_DEFINITION.substitute(env))
@@ -1045,6 +1064,8 @@ def load_aten_declarations(path):
                 typed_args.append('*')
                 positional = False
             typename = arg['simple_type']
+            if arg.get('is_nullable'):
+                typename = '{}?'.format(typename)
             if arg.get('size') is not None:
                 typename = '{}[{}]'.format(typename, arg['size'])
             param = typename + ' ' + arg['name']
@@ -1059,7 +1080,10 @@ def load_aten_declarations(path):
                 param += '=' + str(default)
             typed_args.append(param)
 
-        # Python function prototype
+        # Python function prototype.
+        # This is the string that we give to FunctionParameter, which is
+        # then parsed into the actual structure which we do parsing
+        # with.
         declaration['typed_args'] = typed_args
         declaration['prototype'] = FUNCTION_PROTOTYPE.substitute(declaration)
 

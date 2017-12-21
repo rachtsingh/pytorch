@@ -17,8 +17,6 @@
 #           backend-specific name to dispatch to, e.g.:
 #           CPU: func_cpu
 #           CUDA: func_cuda
-# template_scalar: if set to True, generates the native function as a templatized function on the scalar
-#                  (C++) type of the underlying function.
 # python_default_init: a map from argument names to default initialize expressions in C++. Such default
 #                      expressions will only be used in Python API. This allows us to write argument with
 #                      a default value that can either cause ambiguity in c++ (e.g., `Scalar p` arguement
@@ -103,11 +101,16 @@
 - func: allclose(Tensor self, Tensor other, double rtol=1e-5, double atol=1e-8) -> bool
 
 - func: is_signed(Tensor self) -> bool
-  template_scalar: True
 
 - func: _standard_gamma_grad(Tensor self, Tensor output) -> Tensor
 
 - func: matmul(Tensor self, Tensor other) -> Tensor
+
+# we define both of these because 'where' does the broadcast and '_s_where' doesn't;
+# this allows us to implicitly calculate the broadcast derivative, while only dealing with the
+# _s_where derivative.
+- func: where(BoolTensor condition, Tensor self, Tensor other) -> Tensor
+- func: _s_where(BoolTensor condition, Tensor self, Tensor other) -> Tensor
 
 - func: RoiPooling2d_forward(Tensor input, Tensor rois, int64_t pooledHeight, int64_t pooledWidth, double spatialScale) -> (Tensor, Tensor)
   variants: function
@@ -121,34 +124,79 @@
     CPU: RoiPooling2d_backward_cpu
     CUDA: RoiPooling2d_backward_cuda
 
-- func: cudnn_convolution_forward(Tensor input, Tensor weight, IntList padding, IntList stride, IntList dilation, int64_t groups, bool benchmark, bool deterministic) -> Tensor
+- func: adaptive_avg_pool1d(Tensor self, IntList[1] output_size) -> Tensor
   variants: function
 
-- func: cudnn_convolution_transpose_backward(Tensor grad_output, Tensor weight, IntList padding, IntList stride, IntList dilation, int64_t groups, bool benchmark, bool deterministic) -> Tensor
+- func: adaptive_max_pool1d(Tensor self, IntList[1] output_size) -> (Tensor, Tensor)
   variants: function
 
-- func: cudnn_convolution_full_forward(Tensor input, Tensor weight, Tensor bias, IntList padding, IntList stride, IntList dilation, int64_t groups, bool benchmark, bool deterministic) -> Tensor
+- func: max_pool1d(Tensor self, IntList[1] kernel_size, IntList[1] stride={}, IntList[1] padding=0, IntList[1] dilation=1, bool ceil_mode=false) -> (Tensor, Tensor)
   variants: function
 
-- func: cudnn_convolution_transpose_full_forward(Tensor input, Tensor weight, Tensor bias, IntList padding, IntList output_padding, IntList stride, IntList dilation, int64_t groups, bool benchmark, bool deterministic) -> Tensor
+- func: selu(Tensor self) -> Tensor
   variants: function
 
-- func: cudnn_convolution_backward(IntList input_size, Tensor grad_output, Tensor weight, IntList padding, IntList stride, IntList dilation, int64_t groups, bool benchmark, bool deterministic) -> Tensor
+- func: selu_(Tensor self) -> Tensor
   variants: function
 
-- func: cudnn_convolution_backward_weight(IntList weight_size, Tensor grad_output, Tensor input, IntList padding, IntList stride, IntList dilation, int64_t groups, bool benchmark, bool deterministic) -> Tensor
+# TODO: Why does kW come before kH?  Hella confusing, because it
+# doesn't match the input layout.
+- func: nnpack_spatial_convolution(Tensor input, Tensor weight, Tensor? bias, int64_t kW, int64_t kH, int64_t padW, int64_t padH) -> Tensor
   variants: function
 
-- func: cudnn_convolution_transpose_backward_weight(IntList weight_size, Tensor grad_output, Tensor input, IntList padding, IntList stride, IntList dilation, int64_t groups, bool benchmark, bool deterministic) -> Tensor
+- func: nnpack_spatial_convolution_backward_input(Tensor input, Tensor grad_output, Tensor weight, int64_t kW, int64_t kH, int64_t padW, int64_t padH) -> Tensor
+  variants: function
+
+- func: nnpack_spatial_convolution_backward_weight(Tensor input, IntList weight_size, Tensor grad_output, int64_t kW, int64_t kH, int64_t padW, int64_t padH) -> Tensor
+  variants: function
+
+- func: nnpack_spatial_convolution_backward(Tensor input, Tensor grad_output, Tensor weight, int64_t kW, int64_t kH, int64_t padW, int64_t padH, std::array<bool,3> output_mask) -> (Tensor, Tensor, Tensor)
+  variants: function
+
+# cudnn_convolution
+
+- func: cudnn_convolution(Tensor self, Tensor weight, Tensor? bias, IntList padding, IntList stride, IntList dilation, int64_t groups, bool benchmark, bool deterministic) -> Tensor
+  variants: function
+
+- func: cudnn_convolution_backward_input(IntList self_size, Tensor grad_output, Tensor weight, IntList padding, IntList stride, IntList dilation, int64_t groups, bool benchmark, bool deterministic) -> Tensor
+  variants: function
+
+- func: cudnn_convolution_backward_weight(IntList weight_size, Tensor grad_output, Tensor self, IntList padding, IntList stride, IntList dilation, int64_t groups, bool benchmark, bool deterministic) -> Tensor
   variants: function
 
 - func: cudnn_convolution_backward_bias(Tensor grad_output) -> Tensor
   variants: function
 
-- func: cudnn_batch_norm_forward(Tensor input, Tensor weight, Tensor bias, Tensor running_mean, Tensor running_var, Tensor save_mean, Tensor save_var, bool training, double exponential_average_factor, double epsilon) -> Tensor
+- func: cudnn_convolution_backward(Tensor self, Tensor grad_output, Tensor weight, IntList padding, IntList stride, IntList dilation, int64_t groups, bool benchmark, bool deterministic, std::array<bool,3> output_mask) -> (Tensor, Tensor, Tensor)
   variants: function
 
-- func: cudnn_batch_norm_backward(Tensor input, Tensor grad_output, Tensor weight, Tensor save_mean, Tensor save_var, bool training, double epsilon) -> (Tensor, Tensor, Tensor)
+# cudnn_convolution_transpose
+
+- func: cudnn_convolution_transpose(Tensor self, Tensor weight, Tensor? bias, IntList padding, IntList output_padding, IntList stride, IntList dilation, int64_t groups, bool benchmark, bool deterministic) -> Tensor
+  variants: function
+
+- func: cudnn_convolution_transpose_backward_input(Tensor grad_output, Tensor weight, IntList padding, IntList stride, IntList dilation, int64_t groups, bool benchmark, bool deterministic) -> Tensor
+  variants: function
+
+- func: cudnn_convolution_transpose_backward_weight(IntList weight_size, Tensor grad_output, Tensor self, IntList padding, IntList stride, IntList dilation, int64_t groups, bool benchmark, bool deterministic) -> Tensor
+  variants: function
+
+- func: cudnn_convolution_transpose_backward_bias(Tensor grad_output) -> Tensor
+  variants: function
+  dispatch: cudnn_convolution_backward_bias
+
+# NB: output_padding not strictly needed here, but it's helpful for the double
+# backwards
+- func: cudnn_convolution_transpose_backward(Tensor self, Tensor grad_output, Tensor weight, IntList padding, IntList output_padding, IntList stride, IntList dilation, int64_t groups, bool benchmark, bool deterministic, std::array<bool,3> output_mask) -> (Tensor, Tensor, Tensor)
+  variants: function
+
+# batchnorm
+
+- func: cudnn_batch_norm(Tensor input, Tensor weight, Tensor? bias, Tensor running_mean, Tensor running_var, bool training, double exponential_average_factor, double epsilon) -> (Tensor, Tensor, Tensor)
+  variants: function
+
+# NB: You can only use this if you used cudnn_batch_norm training=True
+- func: cudnn_batch_norm_backward(Tensor input, Tensor grad_output, Tensor weight, Tensor running_mean, Tensor running_var, Tensor? save_mean, Tensor? save_var, double epsilon) -> (Tensor, Tensor, Tensor)
   variants: function
 
 # NB: input is special cased in a way I don't quite understand
@@ -185,3 +233,16 @@
 
 - func: conv_tbc_backward(Tensor self, Tensor input, Tensor weight, Tensor bias, int64_t pad) -> (Tensor, Tensor, Tensor)
 
+- func: _convolution_nogroup(Tensor input, Tensor weight, Tensor? bias, IntList stride, IntList padding, IntList dilation, bool transposed, IntList output_padding) -> Tensor
+  variants: function
+
+- func: _convolution(Tensor input, Tensor weight, Tensor? bias, IntList stride, IntList padding, IntList dilation, bool transposed, IntList output_padding, int64_t groups, bool benchmark, bool deterministic, bool cudnn_enabled) -> Tensor
+  variants: function
+
+# NB: We MUST call the input self, otherwise codegen will attempt to
+# dispatch on ggI... which might be undefined.
+- func: _convolution_double_backward(Tensor? ggI, Tensor? ggW, Tensor? ggb, Tensor gO, Tensor weight, Tensor self, IntList stride, IntList padding, IntList dilation, bool transposed, IntList output_padding, int64_t groups, bool benchmark, bool deterministic, bool cudnn_enabled, std::array<bool,3> output_mask) -> (Tensor, Tensor, Tensor)
+  variants: function
+
+- func: batch_norm(Tensor input, Tensor? weight, Tensor? bias, Tensor running_mean, Tensor running_var, bool training, double momentum, double eps, bool cudnn_enabled) -> Tensor
+  variants: function
