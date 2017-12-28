@@ -8,7 +8,7 @@ import torch
 from common import TestCase, run_tests
 from torch.autograd import Variable, gradcheck
 from torch.distributions import (Bernoulli, Beta, Categorical, Dirichlet,
-                                 Exponential, Gamma, Laplace, Normal)
+                                 Exponential, Gamma, Laplace, Normal, MultivariateNormal)
 from torch.distributions.uniform import Uniform
 
 TEST_NUMPY = True
@@ -331,6 +331,50 @@ class TestDistributions(TestCase):
             self._check_sampler_sampler(Normal(mean, std),
                                         scipy.stats.norm(loc=mean, scale=std),
                                         'Normal(mean={}, std={})'.format(mean, std))
+
+    def test_multivariate_normal_shape(self):
+        mean = Variable(torch.randn(5, 3), requires_grad=True)
+        mean_no_batch = Variable(torch.randn(3), requires_grad=True)
+        mean_multi_batch = Variable(torch.randn(6, 5, 3), requires_grad=True)
+        tmp = torch.randn(3, 10)
+        cov = Variable(torch.matmul(tmp, tmp.t())/tmp.shape[-1], requires_grad=True)
+        scale_tril = Variable(torch.potrf(cov.data, upper=False), requires_grad=True)
+
+        # ensure that sample, batch, event shapes all handled correctly
+        self.assertEqual(MultivariateNormal(mean, cov).sample().size(), (5, 3))
+        self.assertEqual(MultivariateNormal(mean_no_batch, cov).sample().size(), (3,))
+        self.assertEqual(MultivariateNormal(mean_multi_batch, cov).sample().size(), (6, 5, 3))
+        self.assertEqual(MultivariateNormal(mean, cov).sample((2,)).size(), (2, 5, 3))
+        self.assertEqual(MultivariateNormal(mean_no_batch, cov).sample((2,)).size(), (2, 3))
+        self.assertEqual(MultivariateNormal(mean_multi_batch, cov).sample((2,)).size(), (2, 6, 5, 3))
+        self.assertEqual(MultivariateNormal(mean, cov).sample((2,7)).size(), (2, 7, 5, 3))
+        self.assertEqual(MultivariateNormal(mean_no_batch, cov).sample((2,7)).size(), (2, 7, 3))
+        self.assertEqual(MultivariateNormal(mean_multi_batch, cov).sample((2,7)).size(), (2, 7, 6, 5, 3))
+        self.assertEqual(MultivariateNormal(mean, scale_tril=scale_tril).sample((2,7)).size(), (2, 7, 5, 3))
+
+    @unittest.skipIf(not TEST_NUMPY, "Numpy not found")
+    def test_multivariate_normal_log_prob(self):
+
+        mean = Variable(torch.randn(3), requires_grad=True)
+        tmp = torch.randn(3, 10)
+        cov = Variable(torch.matmul(tmp, tmp.t())/tmp.shape[-1], requires_grad=True)
+        scale_tril = Variable(torch.potrf(cov.data, upper=False), requires_grad=True)
+
+        # TODO these are failing at the moment due to shape issues... the helper seems to ignore event_shape
+        #self._gradcheck_log_prob(MultivariateNormal, (mean, cov))
+        #self._gradcheck_log_prob(MultivariateNormal, (mean, None, scale_tril))
+
+        dist1 = MultivariateNormal(mean, cov)
+        dist2 = MultivariateNormal(mean, scale_tril=scale_tril)
+        ref_dist = scipy.stats.multivariate_normal(mean.data.numpy(), cov.data.numpy())
+
+        x = dist1.sample((10,))
+        expected = ref_dist.logpdf(x.data.numpy())
+
+        self.assertAlmostEqual(0.0, np.mean((dist1.log_prob(x).data.numpy() - expected)**2), places=3)
+        self.assertAlmostEqual(0.0, np.mean((dist2.log_prob(x).data.numpy() - expected)**2), places=3)
+
+
 
     def test_exponential(self):
         rate = Variable(torch.randn(5, 5).abs(), requires_grad=True)
