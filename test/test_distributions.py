@@ -352,6 +352,21 @@ class TestDistributions(TestCase):
         self.assertEqual(MultivariateNormal(mean_multi_batch, cov).sample((2,7)).size(), (2, 7, 6, 5, 3))
         self.assertEqual(MultivariateNormal(mean, scale_tril=scale_tril).sample((2,7)).size(), (2, 7, 5, 3))
 
+        # check these also work for Tensors, not just variables
+        mean = mean.data
+        mean_no_batch = mean_no_batch.data
+        mean_multi_batch = mean_multi_batch.data
+        cov = cov.data
+        self.assertEqual(MultivariateNormal(mean, cov).sample().size(), (5, 3))
+        self.assertEqual(MultivariateNormal(mean_no_batch, cov).sample().size(), (3,))
+        self.assertEqual(MultivariateNormal(mean_multi_batch, cov).sample().size(), (6, 5, 3))
+        self.assertEqual(MultivariateNormal(mean, cov).sample((2,)).size(), (2, 5, 3))
+        self.assertEqual(MultivariateNormal(mean_no_batch, cov).sample((2,)).size(), (2, 3))
+        self.assertEqual(MultivariateNormal(mean_multi_batch, cov).sample((2,)).size(), (2, 6, 5, 3))
+        self.assertEqual(MultivariateNormal(mean, cov).sample((2,7)).size(), (2, 7, 5, 3))
+        self.assertEqual(MultivariateNormal(mean_no_batch, cov).sample((2,7)).size(), (2, 7, 3))
+        self.assertEqual(MultivariateNormal(mean_multi_batch, cov).sample((2,7)).size(), (2, 7, 6, 5, 3))
+
     @unittest.skipIf(not TEST_NUMPY, "Numpy not found")
     def test_multivariate_normal_log_prob(self):
 
