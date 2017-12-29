@@ -28,11 +28,13 @@ from collections import namedtuple
 from itertools import product
 
 import torch
-from common import TestCase, run_tests, set_rng_seed
 from torch.autograd import Variable, gradcheck
 from torch.distributions import (Bernoulli, Beta, Categorical, Cauchy,
                                  Dirichlet, Exponential, Gamma, Laplace,
                                  Normal, OneHotCategorical, Uniform)
+from torch.distributions.constraints import dependent
+
+from common import TestCase, run_tests, set_rng_seed
 
 TEST_NUMPY = True
 try:
@@ -919,6 +921,42 @@ class TestDistributionShapes(TestCase):
         self.assertEqual(laplace.sample((3, 2)).size(), torch.Size((3, 2, 2)))
         self.assertEqual(laplace.log_prob(self.tensor_sample_1).size(), torch.Size((3, 2)))
         self.assertRaises(ValueError, laplace.log_prob, self.tensor_sample_2)
+
+
+class TestConstraints(TestCase):
+    def test_parameter_pseudoinverse(self):
+        for Dist, params in EXAMPLES:
+            for i, param in enumerate(params):
+                dist = Dist(**param)
+                for name, expected in param.items():
+                    if not (torch.is_tensor(expected) or isinstance(expected, Variable)):
+                        expected = torch.Tensor([expected])
+                    if Dist in (Categorical, OneHotCategorical) and name == 'probs':
+                        # These distributions accept positive probs, but elsewhere we
+                        # use a stricter constraint to the simplex.
+                        expected = expected / expected.sum(-1, True)
+                    c = dist.constraints[name]
+                    if c is dependent:
+                        continue
+                    unconstrained = c.to_unconstrained(expected)
+                    actual = c.to_constrained(unconstrained)
+                    message = '{} example {}/{} parameter {}. expected {}, actual {}'.format(
+                        Dist.__name__, i, len(params), name, expected, actual)
+                    self.assertEqual(actual, expected, message=message)
+
+    def test_sample_pseudoinverse(self):
+        for Dist, params in EXAMPLES:
+            for i, param in enumerate(params):
+                dist = Dist(**param)
+                c = dist.constraints['sample']
+                if c is dependent:
+                    continue
+                expected = dist.sample()
+                unconstrained = c.to_unconstrained(expected)
+                actual = c.to_constrained(unconstrained)
+                message = '{} example {}/{} sample. expected {}, actual {}'.format(
+                        Dist.__name__, i, len(params), expected, actual)
+                self.assertEqual(actual, expected, message=message)
 
 
 if __name__ == '__main__':

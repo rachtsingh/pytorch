@@ -3,6 +3,7 @@ from numbers import Number
 
 import torch
 from torch.autograd import Variable
+from torch.distributions.constraints import dependent, interval
 from torch.distributions.distribution import Distribution
 from torch.distributions.utils import broadcast_all
 
@@ -32,6 +33,12 @@ class Uniform(Distribution):
         else:
             batch_shape = self.low.size()
         super(Uniform, self).__init__(batch_shape)
+
+    @property
+    def constraints(self):
+        # TODO allow (loc,scale) parameterization to allow independent constraints.
+        return {'low': dependent, 'high': dependent,
+                'sample': interval(self.low, self.high)}
 
     def rsample(self, sample_shape=torch.Size()):
         shape = self._extended_shape(sample_shape)

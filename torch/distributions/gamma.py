@@ -3,6 +3,7 @@ from numbers import Number
 import torch
 from torch.autograd import Function, Variable
 from torch.autograd.function import once_differentiable
+from torch.distributions.constraints import positive
 from torch.distributions.distribution import Distribution
 from torch.distributions.utils import broadcast_all, digamma
 
@@ -29,6 +30,7 @@ class Gamma(Distribution):
         beta (float or Tensor or Variable): rate = 1 / scale of the distribution
     """
     has_rsample = True
+    constraints = {'alpha': positive, 'beta': positive, 'sample': positive}
 
     def __init__(self, alpha, beta):
         self.alpha, self.beta = broadcast_all(alpha, beta)

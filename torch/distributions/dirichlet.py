@@ -3,6 +3,7 @@ from numbers import Number
 import torch
 from torch.autograd import Function, Variable
 from torch.autograd.function import once_differentiable
+from torch.distributions.constraints import positive, simplex
 from torch.distributions.distribution import Distribution
 from torch.distributions.utils import broadcast_all, digamma
 
@@ -44,6 +45,7 @@ class Dirichlet(Distribution):
         alpha (Tensor or Variable): concentration parameter of the distribution
     """
     has_rsample = True
+    constraints = {'alpha': positive, 'sample': simplex}
 
     def __init__(self, alpha):
         self.alpha, = broadcast_all(alpha)

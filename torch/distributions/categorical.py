@@ -1,5 +1,6 @@
 import torch
 from torch.autograd import Variable
+from torch.distributions.constraints import simplex, unconstrained
 from torch.distributions.distribution import Distribution
 
 
@@ -30,6 +31,7 @@ class Categorical(Distribution):
         probs (Tensor or Variable): event probabilities
     """
     has_enumerate_support = True
+    constraints = {'probs': simplex, 'sample': unconstrained}
 
     def __init__(self, probs):
         self.probs = probs
