@@ -10,8 +10,8 @@ class Constraint(object):
     valid, e.g. within which a variable can optimized.
 
     Each constraint class registers a pseudoinverse pair of transforms
-    `to_unconstrained` and `from_unconstrained`. These allow standard paramters
-    to be transformed to an unconstrained space for optimization and
+    `to_unconstrained` and `from_unconstrained`. These allow standard
+    parameters to be transformed to an unconstrained space for optimization and
     transformed back after optimization. Note that these are not necessarily
     inverse pairs since the unconstrained space may have extra dimensions that
     are projected out; only the one-sided inverse equation is guaranteed::
@@ -47,11 +47,11 @@ class Dependent(Constraint):
     Placeholder for variables whose support depends on other variables.
     """
     def to_unconstrained(self, x):
-        raise ValueError('Parameter cannot be transformed from an unconstraned space; '
+        raise ValueError('Parameter cannot be transformed from an unconstrained space; '
                          'Try another parameterization to make parameters independent.')
 
     def to_constrained(self, u):
-        raise ValueError('Parameter cannot be transformed to an unconstraned space; '
+        raise ValueError('Parameter cannot be transformed to an unconstrained space; '
                          'Try another parameterization to make parameters independent.')
 
 
@@ -64,20 +64,6 @@ class Positive(Constraint):
 
     def to_constrained(self, u):
         return torch.exp(u)
-
-
-class GreaterThan(Constraint):
-    """
-    Constraint to the positive half line `(0, inf)`.
-    """
-    def __init__(self, lower_bound):
-        self.lower_bound = lower_bound
-
-    def to_unconstrained(self, x):
-        return torch.log(x - self.lower_bound)
-
-    def to_constrained(self, u):
-        return torch.exp(u) + self.lower_bound
 
 
 class Interval(Constraint):
@@ -113,7 +99,6 @@ class Simplex(Constraint):
 unconstrained = Unconstrained()
 dependent = Dependent()
 positive = Positive()
-greater_than = GreaterThan
 unit_interval = Interval(0, 1)
 interval = Interval
 simplex = Simplex()
