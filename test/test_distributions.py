@@ -948,7 +948,7 @@ class TestConstraints(TestCase):
         for Dist, params in EXAMPLES:
             for i, param in enumerate(params):
                 dist = Dist(**param)
-                c = dist.constraints['sample']
+                c = dist.constraints['support']
                 if c is dependent:
                     continue
                 expected = dist.sample()

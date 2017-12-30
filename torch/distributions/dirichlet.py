@@ -45,7 +45,7 @@ class Dirichlet(Distribution):
         alpha (Tensor or Variable): concentration parameter of the distribution
     """
     has_rsample = True
-    constraints = {'alpha': positive, 'sample': simplex}
+    constraints = {'alpha': positive, 'support': simplex}
 
     def __init__(self, alpha):
         self.alpha, = broadcast_all(alpha)

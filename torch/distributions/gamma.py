@@ -30,7 +30,7 @@ class Gamma(Distribution):
         beta (float or Tensor or Variable): rate = 1 / scale of the distribution
     """
     has_rsample = True
-    constraints = {'alpha': positive, 'beta': positive, 'sample': positive}
+    constraints = {'alpha': positive, 'beta': positive, 'support': positive}
 
     def __init__(self, alpha, beta):
         self.alpha, self.beta = broadcast_all(alpha, beta)

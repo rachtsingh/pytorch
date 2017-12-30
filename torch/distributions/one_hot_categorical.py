@@ -27,7 +27,7 @@ class OneHotCategorical(Distribution):
         probs (Tensor or Variable): event probabilities
     """
     has_enumerate_support = True
-    constraints = {'probs': simplex, 'sample': unconstrained}
+    constraints = {'probs': simplex, 'support': unconstrained}
 
     def __init__(self, probs):
         self._categorical = Categorical(probs)

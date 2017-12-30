@@ -38,7 +38,7 @@ class Uniform(Distribution):
     def constraints(self):
         # TODO allow (loc,scale) parameterization to allow independent constraints.
         return {'low': dependent, 'high': dependent,
-                'sample': interval(self.low, self.high)}
+                'support': interval(self.low, self.high)}
 
     def rsample(self, sample_shape=torch.Size()):
         shape = self._extended_shape(sample_shape)

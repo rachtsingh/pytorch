@@ -21,7 +21,7 @@ class Exponential(Distribution):
         rate (float or Tensor or Variable): rate = 1 / scale of the distribution
     """
     has_rsample = True
-    constraints = {'rate': positive, 'sample': positive}
+    constraints = {'rate': positive, 'support': positive}
 
     def __init__(self, rate):
         self.rate, = broadcast_all(rate)

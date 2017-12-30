@@ -23,7 +23,7 @@ class Beta(Distribution):
         alpha (Tensor or Variable): concentration parameter of the distribution
     """
     has_rsample = True
-    constraints = {'alpha': positive, 'beta': positive, 'sample': unit_interval}
+    constraints = {'alpha': positive, 'beta': positive, 'support': unit_interval}
 
     def __init__(self, alpha, beta):
         if isinstance(alpha, Number) and isinstance(beta, Number):

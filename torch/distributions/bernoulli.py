@@ -25,7 +25,7 @@ class Bernoulli(Distribution):
         probs (Number, Tensor or Variable): the probabilty of sampling `1`
     """
     has_enumerate_support = True
-    constraints = {'probs': positive, 'sample': unconstrained}
+    constraints = {'probs': positive, 'support': unconstrained}
 
     def __init__(self, probs):
         self.probs, = broadcast_all(probs)

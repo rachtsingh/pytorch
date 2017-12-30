@@ -25,7 +25,7 @@ class Normal(Distribution):
         std (float or Tensor or Variable): standard deviation of the distribution
     """
     has_rsample = True
-    constraints = {'mean': unconstrained, 'std': positive, 'sample': unconstrained}
+    constraints = {'mean': unconstrained, 'std': positive, 'support': unconstrained}
 
     def __init__(self, mean, std):
         self.mean, self.std = broadcast_all(mean, std)
