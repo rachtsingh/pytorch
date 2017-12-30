@@ -1,7 +1,7 @@
 import torch
 from torch.autograd import Variable
+from torch.distributions import constraints
 from torch.distributions.categorical import Categorical
-from torch.distributions.constraints import simplex, unconstrained
 from torch.distributions.distribution import Distribution
 
 
@@ -26,8 +26,9 @@ class OneHotCategorical(Distribution):
     Args:
         probs (Tensor or Variable): event probabilities
     """
+    params = {'probs': constraints.simplex}
+    support = constraints.unconstrained
     has_enumerate_support = True
-    constraints = {'probs': simplex, 'support': unconstrained}
 
     def __init__(self, probs):
         self._categorical = Categorical(probs)

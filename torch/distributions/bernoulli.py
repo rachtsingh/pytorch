@@ -2,7 +2,7 @@ from numbers import Number
 
 import torch
 from torch.autograd import Variable
-from torch.distributions.constraints import positive, unconstrained
+from torch.distributions import constraints
 from torch.distributions.distribution import Distribution
 from torch.distributions.utils import broadcast_all
 
@@ -24,8 +24,9 @@ class Bernoulli(Distribution):
     Args:
         probs (Number, Tensor or Variable): the probabilty of sampling `1`
     """
+    params = {'probs': constraints.positive}
+    support = constraints.unconstrained
     has_enumerate_support = True
-    constraints = {'probs': positive, 'support': unconstrained}
 
     def __init__(self, probs):
         self.probs, = broadcast_all(probs)

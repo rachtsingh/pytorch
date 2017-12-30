@@ -924,7 +924,7 @@ class TestDistributionShapes(TestCase):
 
 
 class TestConstraints(TestCase):
-    def test_parameter_pseudoinverse(self):
+    def test_params_pseudoinverse(self):
         for Dist, params in EXAMPLES:
             for i, param in enumerate(params):
                 dist = Dist(**param)
@@ -935,7 +935,7 @@ class TestConstraints(TestCase):
                         # These distributions accept positive probs, but elsewhere we
                         # use a stricter constraint to the simplex.
                         expected = expected / expected.sum(-1, True)
-                    c = dist.constraints[name]
+                    c = dist.params[name]
                     if c is dependent:
                         continue
                     unconstrained = c.to_unconstrained(expected)
@@ -944,13 +944,11 @@ class TestConstraints(TestCase):
                         Dist.__name__, i, len(params), name, expected, actual)
                     self.assertEqual(actual, expected, message=message)
 
-    def test_sample_pseudoinverse(self):
+    def test_support_pseudoinverse(self):
         for Dist, params in EXAMPLES:
             for i, param in enumerate(params):
                 dist = Dist(**param)
-                c = dist.constraints['support']
-                if c is dependent:
-                    continue
+                c = dist.support
                 expected = dist.sample()
                 unconstrained = c.to_unconstrained(expected)
                 actual = c.to_constrained(unconstrained)

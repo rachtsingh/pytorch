@@ -3,7 +3,7 @@ from numbers import Number
 
 import torch
 from torch.autograd import Variable
-from torch.distributions.constraints import positive, unconstrained
+from torch.distributions import constraints
 from torch.distributions.distribution import Distribution
 from torch.distributions.utils import broadcast_all
 
@@ -24,8 +24,9 @@ class Normal(Distribution):
         mean (float or Tensor or Variable): mean of the distribution
         std (float or Tensor or Variable): standard deviation of the distribution
     """
+    params = {'mean': constraints.unconstrained, 'std': constraints.positive}
+    support = constraints.unconstrained
     has_rsample = True
-    constraints = {'mean': unconstrained, 'std': positive, 'support': unconstrained}
 
     def __init__(self, mean, std):
         self.mean, self.std = broadcast_all(mean, std)
