@@ -87,6 +87,84 @@ __device__ inline T reverse_bounds(T value) {
   return value;
 }
 
+// This function is adapted from Numpy's distributions.c file.
+// It is MIT licensed, so here is the copyright: 
+
+/* Copyright 2005 Robert Kern (robert.kern@gmail.com)
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the
+ * "Software"), to deal in the Software without restriction, including
+ * without limitation the rights to use, copy, modify, merge, publish,
+ * distribute, sublicense, and/or sell copies of the Software, and to
+ * permit persons to whom the Software is furnished to do so, subject to
+ * the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included
+ * in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+ * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+ * CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+ * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+ * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+__device__ inline int sample_poisson(curandState_t *state, double lambda) {
+	if (lambda >= 10) {
+    // transformed rejection method, (Hoermann, 1993)
+    int k;
+    double U, V, slam, loglam, a, b, invalpha, vr, us;
+
+    slam = sqrt(lambda);
+    loglam = log(lambda);
+    b = 0.931 + 2.53 * slam;
+    a = -0.059 + 0.02483 * b;
+    invalpha = 1.1239 + 1.1328/(b-3.4);
+    vr = 0.9277 - 3.6224/(b-2);
+
+    while (1) {
+      U = curand_uniform_double(state) - 0.5;
+      V = curand_uniform_double(state);
+      us = 0.5 - fabs(U);
+      k = (int) floor((2*a/us + b)*U + lambda + 0.43);
+      if ((us >= 0.07) && (V <= vr)) {
+        return k;
+      }
+      if ((k < 0) || ((us < 0.013) && (V > us))) {
+        continue;
+      }
+      if ((log(V) + log(invalpha) - log(a/(us*us)+b)) <= (-lambda + k*loglam - lgamma(k+1)))
+      {
+        return k;
+      }
+    }
+  }
+  else if (lambda == 0) {
+    return 0;
+  }
+  else {
+    int X;
+    double prod, U, enlam;
+
+    enlam = exp(-lambda);
+    X = 0;
+    prod = 1.0;
+    while (1) {
+      U = curand_uniform_double(state);
+      prod *= U;
+      if (prod > enlam) {
+        X += 1;
+      }
+      else {
+        return X;
+      }
+    }
+  }
+}
+
 
 #ifdef CUDA_HALF_TENSOR
 __device__ inline half half_uniform_scale_and_shift(float x, double a, double b) {
@@ -97,33 +175,47 @@ __device__ inline half half_uniform_scale_and_shift(float x, double a, double b)
 }
 #endif
 
-#define GENERATE_KERNEL1(NAME, T, ARG1, CURAND_T, CURAND_FUNC, TRANSFORM)      \
-__global__ void NAME(curandStateMtgp32 *state, int size, T *result, ARG1)      \
-{                                                                              \
-  int idx = blockIdx.x * BLOCK_SIZE + threadIdx.x;                             \
-  int rounded_size = THCCeilDiv(size, BLOCK_SIZE) * BLOCK_SIZE;                \
-  for (int i = idx; i < rounded_size; i += BLOCK_SIZE * MAX_NUM_BLOCKS) {      \
-    CURAND_T x = CURAND_FUNC(&state[blockIdx.x]);                              \
-    if (i < size) {                                                            \
-      T y = TRANSFORM;                                                         \
-      result[i] = y;                                                           \
-    }                                                                          \
-  }                                                                            \
+#define GENERATE_KERNEL1(NAME, T, ARG1, CURAND_T, CURAND_FUNC, TRANSFORM)           \
+__global__ void NAME(curandStateMtgp32 *state, int size, T *result, ARG1)           \
+{                                                                                   \
+  int idx = blockIdx.x * BLOCK_SIZE + threadIdx.x;                                  \
+  int rounded_size = THCCeilDiv(size, BLOCK_SIZE) * BLOCK_SIZE;                     \
+  for (int i = idx; i < rounded_size; i += BLOCK_SIZE * MAX_NUM_BLOCKS) {           \
+    CURAND_T x = CURAND_FUNC(&state[blockIdx.x]);                                   \
+    if (i < size) {                                                                 \
+      T y = TRANSFORM;                                                              \
+      result[i] = y;                                                                \
+    }                                                                               \
+  }                                                                                 \
 }
 
-#define GENERATE_KERNEL2(NAME, T, ARG1, ARG2, CURAND_T, CURAND_FUNC, TRANSFORM)      \
-__global__ void NAME(curandStateMtgp32 *state, int size, T *result, ARG1, ARG2)      \
-{                                                                                    \
-  int idx = blockIdx.x * BLOCK_SIZE + threadIdx.x;                                   \
-  int rounded_size = THCCeilDiv(size, BLOCK_SIZE) * BLOCK_SIZE;                      \
-  for (int i = idx; i < rounded_size; i += BLOCK_SIZE * MAX_NUM_BLOCKS) {            \
-    CURAND_T x = CURAND_FUNC(&state[blockIdx.x]);                                    \
-    if (i < size) {                                                                  \
-      T y = TRANSFORM;                                                               \
-      result[i] = y;                                                                 \
-    }                                                                                \
-  }                                                                                  \
+#define GENERATE_KERNEL2(NAME, T, ARG1, ARG2, CURAND_T, CURAND_FUNC, TRANSFORM)     \
+__global__ void NAME(curandStateMtgp32 *state, int size, T *result, ARG1, ARG2)     \
+{                                                                                   \
+  int idx = blockIdx.x * BLOCK_SIZE + threadIdx.x;                                  \
+  int rounded_size = THCCeilDiv(size, BLOCK_SIZE) * BLOCK_SIZE;                     \
+  for (int i = idx; i < rounded_size; i += BLOCK_SIZE * MAX_NUM_BLOCKS) {           \
+    CURAND_T x = CURAND_FUNC(&state[blockIdx.x]);                                   \
+    if (i < size) {                                                                 \
+      T y = TRANSFORM;                                                              \
+      result[i] = y;                                                                \
+    }                                                                               \
+  }                                                                                 \
 }
+
+#define GENERATE_KERNEL3(NAME, T, ARG1_T, ARG1, SAMPLE_FUNC, TRANSFORM)             \
+__global__ void NAME(curandStateMtgp32 *state, int size, T *result, ARG1_T ARG1)    \
+{                                                                                   \
+  int idx = blockIdx.x * BLOCK_SIZE + threadIdx.x;                                  \
+  int rounded_size = THCCeilDiv(size, BLOCK_SIZE) * BLOCK_SIZE;                     \
+  for (int i = idx; i < rounded_size; i += BLOCK_SIZE * MAX_NUM_BLOCKS) {           \
+    T x = SAMPLE_FUNC(&state[blockIdx.x], (double) ARG1);                           \
+    if (i < size) {                                                                 \
+      T y = TRANSFORM;                                                              \
+      result[i] = y;                                                                \
+    }                                                                               \
+  }                                                                                 \
+}                                                                                   \
 
 template<typename T, typename U>
 struct is_same { static const bool value = false; };
@@ -163,6 +255,8 @@ GENERATE_KERNEL1(generate_exponential, double, double lambda, double, curand_uni
 GENERATE_KERNEL2(generate_cauchy, float, double median, double sigma, float, curand_uniform, (float)(median + sigma * tan(M_PI*(x-0.5))))
 GENERATE_KERNEL2(generate_cauchy, double, double median, double sigma, double, curand_uniform_double, (double)(median + sigma * tan(M_PI*(x-0.5))))
 
+GENERATE_KERNEL3(generate_poisson, int, float, lambda, )
+
 #ifdef CUDA_HALF_TENSOR
 GENERATE_KERNEL2(generate_uniform, half, double a, double b, float, curand_uniform, (half_uniform_scale_and_shift(x, a, b)))
 GENERATE_KERNEL2(generate_normal, half, double mean, double stdv, float, curand_normal, (ScalarConvert<float, half>::to((x * stdv) + mean)))
@@ -175,3 +269,4 @@ GENERATE_KERNEL2(generate_cauchy, half, double median, double sigma, float, cura
 
 #undef GENERATE_KERNEL1
 #undef GENERATE_KERNEL2
+#undef GENERATE_KERNEL3

@@ -71,6 +71,12 @@ TH_API double THRandom_exponential(THGenerator *_generator, double lambda);
 */
 TH_API double THRandom_standard_gamma(THGenerator *_generator, double alpha);
 
+/** Generates a random number from a Poisson distribution.
+    The Poisson pmf is proportional to $lambda^k e^{-lambda}/k!$
+    The rate parameter lambda is a positive real number.
+*/
+TH_API int THRandom_poisson(THGenerator *_generator, double lambda);
+
 /** Returns a random number from a Cauchy distribution.
     The Cauchy density is $p(x) = sigma/(pi*(sigma^2 + (x-median)^2))$
 */

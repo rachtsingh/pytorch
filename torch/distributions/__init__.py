@@ -41,6 +41,7 @@ from .gamma import Gamma
 from .laplace import Laplace
 from .normal import Normal
 from .one_hot_categorical import OneHotCategorical
+from .poisson import Poisson
 from .uniform import Uniform
 
 __all__ = [
@@ -55,5 +56,6 @@ __all__ = [
     'Laplace',
     'Normal',
     'OneHotCategorical',
+    'Poisson',
     'Uniform',
 ]

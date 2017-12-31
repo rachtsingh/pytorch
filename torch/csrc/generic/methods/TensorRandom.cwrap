@@ -231,6 +231,26 @@
 ]]
 
 [[
+  name: poisson
+  types:
+    - floating_point
+  backends:
+    - CPU
+    - CUDA
+  cname: poisson
+  return: argument 0
+  variants:
+    - function
+  arguments:
+    - arg: THTensor* output
+      output: True
+    - arg: THGenerator* generator
+      default: THPGenerator_TH_CData(THPDefaultGenerator)
+      kwarg_only: True
+    - THTensor* lambda
+]]
+
+[[
   name: dirichlet_grad
   types:
     - floating_point

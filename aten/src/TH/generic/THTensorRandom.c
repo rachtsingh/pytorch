@@ -134,6 +134,12 @@ void THTensor_(standard_gamma)(THTensor *self, THGenerator *gen, THTensor *alpha
 
 #undef TH_REAL_MIN
 
+void THTensor_(poisson)(THTensor *self, THGenerator *_generator, THTensor *lambda)
+{
+  THTensor_(resizeAs)(self, lambda);
+  TH_TENSOR_APPLY2(real, self, real, lambda, *self_data = THRandom_poisson(_generator, *lambda_data););
+}
+
 void THTensor_(cauchy)(THTensor *self, THGenerator *_generator, double median, double sigma)
 {
   TH_TENSOR_APPLY(real, self, *self_data = (real)THRandom_cauchy(_generator, median, sigma););
