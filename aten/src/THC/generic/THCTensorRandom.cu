@@ -109,18 +109,18 @@ THC_API void THCTensor_(cauchy)(THCState* state, THCTensor *self_, double median
 
 THC_API void THCTensor_(poisson)(THCState*state, THCudaLongTensor *self_, double lambda)
 {
-  THCAssertSameGPU(THCTensor_(checkGPU)(state, 1, self_));
-  ptrdiff_t size = THCTensor_(nElement)(state, self_);
+  THCAssertSameGPU(THCudaLongTensor_checkGPU(state, 1, self_));
+  ptrdiff_t size = THCudaLongTensor_nElement(state, self_);
   if (size == 0) return;
   Generator* gen = THCRandom_getGenerator(state);
 
-  THCudaLongTensor *self = THCTensor_(newContiguous)(state, self_);
+  THCudaLongTensor *self = THCudaLongTensor_newContiguous(state, self_);
   real *data = THCudaLongTensor_data(state, self);
 
   generate_poisson<<<NUM_BLOCKS, BLOCK_SIZE, 0, THCState_getCurrentStream(state)>>>(
       gen->gen_states, size, data, lambda);
 
-  THCTensor_(freeCopyTo)(state, self, self_);
+  THCudaLongTensor_freeCopyTo(state, self, self_);
 };
 
 void THCTensor_(renormRows)(struct THCState* state,
