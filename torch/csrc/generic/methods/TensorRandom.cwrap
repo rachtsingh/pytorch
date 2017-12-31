@@ -233,7 +233,7 @@
 [[
   name: poisson
   types:
-    - floating_point
+    - integral
   backends:
     - CPU
     - CUDA
