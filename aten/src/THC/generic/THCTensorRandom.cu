@@ -115,7 +115,7 @@ THC_API void THCTensor_(poisson)(THCState*state, THCudaLongTensor *self_, double
   Generator* gen = THCRandom_getGenerator(state);
 
   THCudaLongTensor *self = THCudaLongTensor_newContiguous(state, self_);
-  real *data = THCudaLongTensor_data(state, self);
+  int64_t *data = THCudaLongTensor_data(state, self);
 
   generate_poisson<<<NUM_BLOCKS, BLOCK_SIZE, 0, THCState_getCurrentStream(state)>>>(
       gen->gen_states, size, data, lambda);
