@@ -112,7 +112,7 @@ __device__ inline T reverse_bounds(T value) {
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-__device__ inline int sample_poisson(curandState_t *state, double lambda) {
+__device__ inline int sample_poisson(curandStateMtgp32 *state, double lambda) {
 	if (lambda >= 10) {
     // transformed rejection method, (Hoermann, 1993)
     int k;
@@ -136,7 +136,7 @@ __device__ inline int sample_poisson(curandState_t *state, double lambda) {
       if ((k < 0) || ((us < 0.013) && (V > us))) {
         continue;
       }
-      if ((log(V) + log(invalpha) - log(a/(us*us)+b)) <= (-lambda + k*loglam - lgamma(k+1)))
+      if ((log(V) + log(invalpha) - log(a/(us*us)+b)) <= (-lambda + k*loglam - lgamma((double) k+1)))
       {
         return k;
       }
@@ -215,7 +215,7 @@ __global__ void NAME(curandStateMtgp32 *state, int size, T *result, ARG1_T ARG1)
       result[i] = y;                                                                \
     }                                                                               \
   }                                                                                 \
-}                                                                                   \
+}                                                                                   
 
 template<typename T, typename U>
 struct is_same { static const bool value = false; };
