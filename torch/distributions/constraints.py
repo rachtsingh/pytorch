@@ -1,5 +1,6 @@
 import torch
 from torch.nn.functional import sigmoid, softmax
+from torch.distributions.utils import tril_mask
 
 
 class Constraint(object):
@@ -19,7 +20,7 @@ class Constraint(object):
 
 class Unconstrained(Constraint):
     """
-    Trivial constraint to the extended real line `[-inf, inf]`.
+    Trivially constrain to the extended real line `[-inf, inf]`.
     """
     def __call__(self, value):
         return value == value  # False for NANs.
@@ -35,7 +36,7 @@ class Dependent(Constraint):
 
 class Positive(Constraint):
     """
-    Constraint to the positive half line `[0, inf]`.
+    Constrain to the positive half line `[0, inf]`.
     """
     def __call__(self, value):
         return value >= 0
@@ -43,7 +44,7 @@ class Positive(Constraint):
 
 class Interval(Constraint):
     """
-    Constraint to an interval `[lower_bound, upper_bound]`.
+    Constrain to an interval `[lower_bound, upper_bound]`.
     """
     def __init__(self, lower_bound, upper_bound):
         self.lower_bound = lower_bound
@@ -55,11 +56,20 @@ class Interval(Constraint):
 
 class Simplex(Constraint):
     """
-    Constraint to the unit simplex in the innermost (rightmost) dimension.
+    Constrain to the unit simplex in the innermost (rightmost) dimension.
     Specifically: `x >= 0` and `x.sum(-1) == 1`.
     """
     def __call__(self, value):
         return (value >= 0) & ((value.sum(-1, True) - 1).abs() < 1e-6)
+
+
+class LowerTriangular(Constraint):
+    """
+    Constrain to lower-triangular square matrices.
+    """
+    def __call__(self, value):
+        mask = tril_mask(value)
+        return ((value == 0) & ~mask).min(-1).min(-1)
 
 
 # Functions and constants are the recommended interface.
@@ -69,3 +79,4 @@ positive = Positive()
 unit_interval = Interval(0, 1)
 interval = Interval
 simplex = Simplex()
+lower_triangular = LowerTriangular()

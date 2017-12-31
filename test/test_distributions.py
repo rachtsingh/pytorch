@@ -34,6 +34,7 @@ from torch.distributions import (Bernoulli, Beta, Categorical, Cauchy,
                                  Normal, OneHotCategorical, Uniform)
 from torch.distributions.constraints import dependent
 from torch.distributions.transforms import transform
+from torch.distributions.utils import tril_mask
 
 from common import TestCase, run_tests, set_rng_seed
 
@@ -985,6 +986,21 @@ class TestConstraints(TestCase):
                 message = '{} example {}/{} sample. expected {}, actual {}'.format(
                     Dist.__name__, i, len(params), value, actual)
                 self.assertEqual(actual, value, message=message)
+
+
+class TestUtils(TestCase):
+    def test_tril_mask(self):
+        examples = [
+            ((2, 2), [[1, 0], [1, 1]]),
+            ((3, 3), [[1, 0, 0], [1, 1, 0], [1, 1, 1]]),
+            ((2, 2, 2), [[[1, 0], [1, 1]], [[1, 0], [1, 1]]]),
+        ]
+        for shape, expected in examples:
+            value = torch.zeros(*shape)
+            expected = torch.ByteTensor(expected)
+            actual = tril_mask(value)
+            self.assertEqual(actual.shape, expected.shape)
+            self.assertTrue((actual == expected).all())
 
 
 if __name__ == '__main__':

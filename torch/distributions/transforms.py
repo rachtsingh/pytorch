@@ -1,5 +1,8 @@
+from __future__ import division
+
 import torch
 from torch.distributions import constraints
+from torch.distributions.utils import tril_mask
 from torch.nn.functional import sigmoid, softmax
 
 __all__ = ['transform', 'register_transform', 'Transform']
@@ -123,3 +126,23 @@ class LogSoftmaxTransform(Transform):
 
     def to_constrained(self, u):
         return softmax(u, dim=-1)
+
+
+@register_transform(constraints.LowerTriangular)
+class LowerTriangularTransform(Transform):
+    """
+    Transform from lower-triangular square matrices of size `(n,n)` to
+    contiguous vectors of size `m = n*(n+1)/2`. Dimensions left of the
+    rightmost shape `(n,n)` or `(m,)` are preserved.
+    """
+    def to_unconstrained(self, x):
+        mask = tril_mask(x)
+        n = x.size(-1)
+        m = n * (n + 1) // 2
+        return x[mask].view(x.shape[-2:] + (m,))
+
+    def to_constrained(self, u):
+        n = int(round(((8 * u.size(-1) + 1)**0.5 + 1) / 2))
+        x = u.new(n).zero_()
+        x[tril_mask(x)] = u
+        return x
