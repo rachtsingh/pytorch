@@ -33,6 +33,7 @@ from torch.distributions import (Bernoulli, Beta, Categorical, Cauchy,
                                  Dirichlet, Exponential, Gamma, Laplace,
                                  Normal, OneHotCategorical, Uniform)
 from torch.distributions.constraints import dependent
+from torch.distributions.transforms import transform
 
 from common import TestCase, run_tests, set_rng_seed
 
@@ -924,37 +925,66 @@ class TestDistributionShapes(TestCase):
 
 
 class TestConstraints(TestCase):
-    def test_params_pseudoinverse(self):
+    def test_params_contains(self):
         for Dist, params in EXAMPLES:
             for i, param in enumerate(params):
                 dist = Dist(**param)
-                for name, expected in param.items():
-                    if not (torch.is_tensor(expected) or isinstance(expected, Variable)):
-                        expected = torch.Tensor([expected])
+                for name, value in param.items():
+                    if not (torch.is_tensor(value) or isinstance(value, Variable)):
+                        value = torch.Tensor([value])
                     if Dist in (Categorical, OneHotCategorical) and name == 'probs':
                         # These distributions accept positive probs, but elsewhere we
                         # use a stricter constraint to the simplex.
-                        expected = expected / expected.sum(-1, True)
-                    c = dist.params[name]
-                    if c is dependent:
+                        value = value / value.sum(-1, True)
+                    constraint = dist.params[name]
+                    if constraint is dependent:
                         continue
-                    unconstrained = c.to_unconstrained(expected)
-                    actual = c.to_constrained(unconstrained)
-                    message = '{} example {}/{} parameter {}. expected {}, actual {}'.format(
-                        Dist.__name__, i, len(params), name, expected, actual)
-                    self.assertEqual(actual, expected, message=message)
+                    message = '{} example {}/{} parameter {} = {}'.format(
+                        Dist.__name__, i, len(params), name, value)
+                    self.assertTrue(constraint(value).all(), msg=message)
 
-    def test_support_pseudoinverse(self):
+    def test_support_contains(self):
         for Dist, params in EXAMPLES:
             for i, param in enumerate(params):
                 dist = Dist(**param)
-                c = dist.support
-                expected = dist.sample()
-                unconstrained = c.to_unconstrained(expected)
-                actual = c.to_constrained(unconstrained)
+                value = dist.sample()
+                constraint = dist.support
+                message = '{} example {}/{} sample = {}'.format(
+                    Dist.__name__, i, len(params), value)
+                self.assertTrue(constraint(value).all(), msg=message)
+
+    def test_params_transform(self):
+        for Dist, params in EXAMPLES:
+            for i, param in enumerate(params):
+                dist = Dist(**param)
+                for name, value in param.items():
+                    if not (torch.is_tensor(value) or isinstance(value, Variable)):
+                        value = torch.Tensor([value])
+                    if Dist in (Categorical, OneHotCategorical) and name == 'probs':
+                        # These distributions accept positive probs, but elsewhere we
+                        # use a stricter constraint to the simplex.
+                        value = value / value.sum(-1, True)
+                    constraint = dist.params[name]
+                    if constraint is dependent:
+                        continue
+                    t = transform(constraint)
+                    unconstrained = t.to_unconstrained(value)
+                    actual = t.to_constrained(unconstrained)
+                    message = '{} example {}/{} parameter {}. expected {}, actual {}'.format(
+                        Dist.__name__, i, len(params), name, value, actual)
+                    self.assertEqual(actual, value, message=message)
+
+    def test_support_transform(self):
+        for Dist, params in EXAMPLES:
+            for i, param in enumerate(params):
+                dist = Dist(**param)
+                value = dist.sample()
+                t = transform(dist.support)
+                unconstrained = t.to_unconstrained(value)
+                actual = t.to_constrained(unconstrained)
                 message = '{} example {}/{} sample. expected {}, actual {}'.format(
-                        Dist.__name__, i, len(params), expected, actual)
-                self.assertEqual(actual, expected, message=message)
+                    Dist.__name__, i, len(params), value, actual)
+                self.assertEqual(actual, value, message=message)
 
 
 if __name__ == '__main__':

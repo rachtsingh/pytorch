@@ -8,94 +8,61 @@ class Constraint(object):
 
     A constraint object represents a region over which a continuous variable is
     valid, e.g. within which a variable can optimized.
-
-    Each constraint class registers a pseudoinverse pair of transforms
-    `to_unconstrained` and `from_unconstrained`. These allow standard
-    parameters to be transformed to an unconstrained space for optimization and
-    transformed back after optimization. Note that these are not necessarily
-    inverse pairs since the unconstrained space may have extra dimensions that
-    are projected out; only the one-sided inverse equation is guaranteed::
-
-        x == c.to_constrained(c.to_unconstrained(x))
     """
-    def to_unconstrained(self, x):
+    def __call__(self, value):
         """
-        Transform from constrained coordinates to unconstrained coordinates.
-        """
-        raise NotImplementedError
-
-    def to_constrained(self, x):
-        """
-        Transform from unconstrained coordinates to constrained coordinates.
+        Returns a byte tensor of sample_shape + batch_shape indicating whether
+        each value satisfies this constraint.
         """
         raise NotImplementedError
 
 
 class Unconstrained(Constraint):
     """
-    Trivial constraint to the real line `(-inf, inf)`.
+    Trivial constraint to the extended real line `[-inf, inf]`.
     """
-    def to_unconstrained(self, x):
-        return x
-
-    def to_constrained(self, u):
-        return u
+    def __call__(self, value):
+        return value == value  # False for NANs.
 
 
 class Dependent(Constraint):
     """
     Placeholder for variables whose support depends on other variables.
     """
-    def to_unconstrained(self, x):
-        raise ValueError('Parameter cannot be transformed from an unconstrained space; '
-                         'Try another parameterization to make parameters independent.')
-
-    def to_constrained(self, u):
-        raise ValueError('Parameter cannot be transformed to an unconstrained space; '
-                         'Try another parameterization to make parameters independent.')
+    def __call__(self, x):
+        raise ValueError('Cannot determine validity of dependent constraint')
 
 
 class Positive(Constraint):
     """
-    Constraint to the positive half line `(0, inf)`.
+    Constraint to the positive half line `[0, inf]`.
     """
-    def to_unconstrained(self, x):
-        return torch.log(x)
-
-    def to_constrained(self, u):
-        return torch.exp(u)
+    def __call__(self, value):
+        return value >= 0
 
 
 class Interval(Constraint):
     """
-    Constraint to an interval `(lower_bound, upper_bound)`.
+    Constraint to an interval `[lower_bound, upper_bound]`.
     """
     def __init__(self, lower_bound, upper_bound):
         self.lower_bound = lower_bound
         self.upper_bound = upper_bound
 
-    def to_unconstrained(self, x):
-        unit = (x - self.lower_bound) / (self.upper_bound - self.lower_bound)
-        return torch.log(unit / (1 - unit))
-
-    def to_constrained(self, u):
-        unit = torch.sigmoid(u)
-        return self.lower_bound + unit * (self.upper_bound - self.lower_bound)
+    def __call__(self, value):
+        return (self.lower_bound <= value) & (value <= self.upper_bound)
 
 
 class Simplex(Constraint):
     """
     Constraint to the unit simplex in the innermost (rightmost) dimension.
-    Specifically: `x > 0` and `x.sum(-1) == 1`.
+    Specifically: `x >= 0` and `x.sum(-1) == 1`.
     """
-    def to_unconstrained(self, x):
-        return torch.log(x)
-
-    def to_constrained(self, u):
-        return softmax(u, dim=-1)
+    def __call__(self, value):
+        return (value >= 0) & ((value.sum(-1, True) - 1).abs() < 1e-6)
 
 
-# Functions and constants.
+# Functions and constants are the recommended interface.
 unconstrained = Unconstrained()
 dependent = Dependent()
 positive = Positive()

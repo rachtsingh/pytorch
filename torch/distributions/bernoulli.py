@@ -24,7 +24,7 @@ class Bernoulli(Distribution):
     Args:
         probs (Number, Tensor or Variable): the probabilty of sampling `1`
     """
-    params = {'probs': constraints.positive}
+    params = {'probs': constraints.unit_interval}
     support = constraints.unconstrained
     has_enumerate_support = True
 
