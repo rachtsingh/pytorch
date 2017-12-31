@@ -255,7 +255,8 @@ GENERATE_KERNEL1(generate_exponential, double, double lambda, double, curand_uni
 GENERATE_KERNEL2(generate_cauchy, float, double median, double sigma, float, curand_uniform, (float)(median + sigma * tan(M_PI*(x-0.5))))
 GENERATE_KERNEL2(generate_cauchy, double, double median, double sigma, double, curand_uniform_double, (double)(median + sigma * tan(M_PI*(x-0.5))))
 
-GENERATE_KERNEL3(generate_poisson, int, float, lambda, )
+GENERATE_KERNEL3(generate_poisson, int, float, lambda, sample_poisson, y)
+GENERATE_KERNEL3(generate_poisson, int, double, lambda, sample_poisson, y)
 
 #ifdef CUDA_HALF_TENSOR
 GENERATE_KERNEL2(generate_uniform, half, double a, double b, float, curand_uniform, (half_uniform_scale_and_shift(x, a, b)))
