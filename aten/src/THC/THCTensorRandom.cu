@@ -112,10 +112,10 @@ __device__ inline T reverse_bounds(T value) {
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-__device__ inline int sample_poisson(curandStateMtgp32 *state, double lambda) {
+__device__ inline int64_t sample_poisson(curandStateMtgp32 *state, double lambda) {
 	if (lambda >= 10) {
     // transformed rejection method, (Hoermann, 1993)
-    int k;
+    int64_t k;
     double U, V, slam, loglam, a, b, invalpha, vr, us;
 
     slam = sqrt(lambda);
@@ -129,7 +129,7 @@ __device__ inline int sample_poisson(curandStateMtgp32 *state, double lambda) {
       U = curand_uniform_double(state) - 0.5;
       V = curand_uniform_double(state);
       us = 0.5 - fabs(U);
-      k = (int) floor((2*a/us + b)*U + lambda + 0.43);
+      k = (int64_t) floor((2*a/us + b)*U + lambda + 0.43);
       if ((us >= 0.07) && (V <= vr)) {
         return k;
       }
@@ -146,7 +146,7 @@ __device__ inline int sample_poisson(curandStateMtgp32 *state, double lambda) {
     return 0;
   }
   else {
-    int X;
+    int64_t X;
     double prod, U, enlam;
 
     enlam = exp(-lambda);
@@ -211,8 +211,7 @@ __global__ void NAME(curandStateMtgp32 *state, int size, T *result, ARG1_T ARG1)
   for (int i = idx; i < rounded_size; i += BLOCK_SIZE * MAX_NUM_BLOCKS) {           \
     T x = SAMPLE_FUNC(&state[blockIdx.x], (double) ARG1);                           \
     if (i < size) {                                                                 \
-      T y = TRANSFORM;                                                              \
-      result[i] = y;                                                                \
+      result[i] = x;                                                                \
     }                                                                               \
   }                                                                                 \
 }                                                                                   
@@ -255,7 +254,6 @@ GENERATE_KERNEL1(generate_exponential, double, double lambda, double, curand_uni
 GENERATE_KERNEL2(generate_cauchy, float, double median, double sigma, float, curand_uniform, (float)(median + sigma * tan(M_PI*(x-0.5))))
 GENERATE_KERNEL2(generate_cauchy, double, double median, double sigma, double, curand_uniform_double, (double)(median + sigma * tan(M_PI*(x-0.5))))
 
-GENERATE_KERNEL3(generate_poisson, int64_t, float, lambda, sample_poisson, y)
 GENERATE_KERNEL3(generate_poisson, int64_t, double, lambda, sample_poisson, y)
 
 #ifdef CUDA_HALF_TENSOR

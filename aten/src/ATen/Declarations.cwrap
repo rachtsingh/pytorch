@@ -3920,6 +3920,7 @@
       kwarg_only: True
     - THTensor* self
 ]]
+
 [[
   name: _standard_gamma
   types:
