@@ -204,12 +204,13 @@ __global__ void NAME(curandStateMtgp32 *state, int size, T *result, ARG1, ARG2) 
 }
 
 #define GENERATE_KERNEL3(NAME, T, ARG1_T, ARG1, SAMPLE_FUNC, TRANSFORM)             \
-__global__ void NAME(curandStateMtgp32 *state, int size, T *result, ARG1_T ARG1)    \
+__global__ void NAME(curandStateMtgp32 *state, int size, T *result, ARG1_T *ARG1)   \
 {                                                                                   \
   int idx = blockIdx.x * BLOCK_SIZE + threadIdx.x;                                  \
   int rounded_size = THCCeilDiv(size, BLOCK_SIZE) * BLOCK_SIZE;                     \
   for (int i = idx; i < rounded_size; i += BLOCK_SIZE * MAX_NUM_BLOCKS) {           \
-    T x = SAMPLE_FUNC(&state[blockIdx.x], (double) ARG1);                           \
+    double ARG1##_double = ScalarConvert<ARG1_T, double>::to(ARG1[i]);              \
+    T x = SAMPLE_FUNC(&state[blockIdx.x], ARG1##_double);                           \
     if (i < size) {                                                                 \
       result[i] = x;                                                                \
     }                                                                               \
@@ -254,6 +255,7 @@ GENERATE_KERNEL1(generate_exponential, double, double lambda, double, curand_uni
 GENERATE_KERNEL2(generate_cauchy, float, double median, double sigma, float, curand_uniform, (float)(median + sigma * tan(M_PI*(x-0.5))))
 GENERATE_KERNEL2(generate_cauchy, double, double median, double sigma, double, curand_uniform_double, (double)(median + sigma * tan(M_PI*(x-0.5))))
 
+GENERATE_KERNEL3(generate_poisson, int64_t, float, lambda, sample_poisson, y)
 GENERATE_KERNEL3(generate_poisson, int64_t, double, lambda, sample_poisson, y)
 
 #ifdef CUDA_HALF_TENSOR
@@ -261,6 +263,7 @@ GENERATE_KERNEL2(generate_uniform, half, double a, double b, float, curand_unifo
 GENERATE_KERNEL2(generate_normal, half, double mean, double stdv, float, curand_normal, (ScalarConvert<float, half>::to((x * stdv) + mean)))
 GENERATE_KERNEL1(generate_exponential, half, double lambda, float, curand_uniform, (ScalarConvert<float, half>::to((float)(-1. / lambda * log(x)))))
 GENERATE_KERNEL2(generate_cauchy, half, double median, double sigma, float, curand_uniform, (ScalarConvert<float, half>::to((float)(median + sigma * tan(M_PI*(x-0.5))))))
+GENERATE_KERNEL3(generate_poisson, int64_t, half, lambda, sample_poisson, y)
 #endif // CUDA_HALF_TENSOR
 
 #include "generic/THCTensorRandom.cu"

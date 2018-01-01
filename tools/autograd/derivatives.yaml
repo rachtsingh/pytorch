@@ -666,9 +666,6 @@
 - name: _standard_gamma_grad(Tensor self, Tensor output)
   self: not_implemented("_standard_gamma_grad")
 
-- name: _poisson(Tensor self, Generator generator)
-  self: zeros_like(grad)
-
 # NN
 
 - name: binary_cross_entropy(Tensor self, Tensor target, Tensor weight, bool size_average, bool reduce)
