@@ -236,6 +236,7 @@
     - floating_point
   backends:
     - CPU
+    - CUDA
   cname: poisson
   return: argument 0
   variants:
