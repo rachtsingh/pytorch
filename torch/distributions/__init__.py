@@ -34,6 +34,7 @@ from .bernoulli import Bernoulli
 from .beta import Beta
 from .categorical import Categorical
 from .cauchy import Cauchy
+from .chi2 import Chi2
 from .dirichlet import Dirichlet
 from .distribution import Distribution
 from .exponential import Exponential
@@ -45,6 +46,7 @@ from .normal import Normal
 from .one_hot_categorical import OneHotCategorical
 from .pareto import Pareto
 from .studentT import StudentT
+from .poisson import Poisson
 from .uniform import Uniform
 
 __all__ = [
@@ -63,5 +65,6 @@ __all__ = [
     'OneHotCategorical',
     'Pareto',
     'StudentT',
+    'Poisson',
     'Uniform',
 ]
