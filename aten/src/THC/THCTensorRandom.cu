@@ -16,17 +16,17 @@
 #define BLOCK_SIZE 256
 
 
-Generator* THCRandom_getGenerator(THCState* state);
+THCGenerator* THCRandom_getGenerator(THCState* state);
 
 /* Sets up generator. Allocates but does not create the generator states. */
-__host__ void initializeGenerator(THCState *state, Generator* gen)
+__host__ void initializeGenerator(THCState *state, THCGenerator* gen)
 {
   THCudaCheck(THCudaMalloc(state, (void**)&gen->gen_states, MAX_NUM_BLOCKS * sizeof(curandStateMtgp32)));
   THCudaCheck(THCudaMalloc(state, (void**)&gen->kernel_params, sizeof(mtgp32_kernel_params)));
 }
 
 /* Creates a new generator state given the seed. */
-__host__ void createGeneratorState(Generator* gen, uint64_t seed)
+__host__ void createGeneratorState(THCGenerator* gen, uint64_t seed)
 {
   if (curandMakeMTGP32Constants(mtgp32dc_params_fast_11213, gen->kernel_params) != CURAND_STATUS_SUCCESS)
   {
@@ -41,7 +41,7 @@ __host__ void createGeneratorState(Generator* gen, uint64_t seed)
 
 __host__ void THCRandom_getRNGState(THCState* state, THByteTensor *rng_state)
 {
-  Generator* gen = THCRandom_getGenerator(state);
+  THCGenerator* gen = THCRandom_getGenerator(state);
 
   // The RNG state comprises the MTPG32 states and the seed.
   static const size_t states_size = MAX_NUM_BLOCKS * sizeof(curandStateMtgp32);
@@ -62,7 +62,7 @@ __global__ void set_rngstate_kernel(curandStateMtgp32 *state, mtgp32_kernel_para
 
 __host__ void THCRandom_setRNGState(THCState* state, THByteTensor *rng_state)
 {
-  Generator* gen = THCRandom_getGenerator(state);
+  THCGenerator* gen = THCRandom_getGenerator(state);
 
   static const size_t states_size = MAX_NUM_BLOCKS * sizeof(curandStateMtgp32);
   static const size_t seed_size = sizeof(gen->initial_seed);

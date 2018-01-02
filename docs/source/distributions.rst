@@ -85,7 +85,13 @@ Probability distributions - torch.distributions
 .. autoclass:: Pareto
     :members:
 
-:hidden:`Uniform`
+:hidden:`Poisson`
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autoclass:: Poisson
+    :members:
+
+ :hidden:`Uniform`
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 .. autoclass:: Uniform

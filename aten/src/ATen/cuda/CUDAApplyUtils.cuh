@@ -283,12 +283,14 @@ bool CUDA_tensor_apply2(at::Tensor a,
     // Empty tensor; do nothing
     return true;
   }
-  const dim3 block = getApplyBlock();
+  const dim3 block = dim3(256);
+  // const dim3 block = getApplyBlock();
 
-  dim3 grid;
-  if (!getApplyGrid(totalElements, grid)) {
-    return false;
-  }
+  dim3 grid = dim3(64);
+  //g if (!getApplyGrid(totalElements, grid)) {
+  //g   return false;
+  //g }
+  //g grid = dim3(1);
 
   // If tensor args have overlapping indices and are read/write, then
   // we must expand the tensor to a contiguous form first, since
