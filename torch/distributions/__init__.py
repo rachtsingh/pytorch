@@ -47,6 +47,7 @@ from .normal import Normal
 from .one_hot_categorical import OneHotCategorical
 from .pareto import Pareto
 from .studentT import StudentT
+from .poisson import Poisson
 from .uniform import Uniform
 
 __all__ = [
@@ -66,6 +67,7 @@ __all__ = [
     'OneHotCategorical',
     'Pareto',
     'StudentT',
+    'Poisson',
     'Uniform',
     'kl_divergence',
     'register_kl',

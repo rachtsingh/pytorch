@@ -333,6 +333,7 @@ IMPLEMENT_STATELESS(bmm)
 IMPLEMENT_STATELESS(multinomial)
 IMPLEMENT_STATELESS(normal)
 IMPLEMENT_STATELESS(standard_gamma)
+IMPLEMENT_STATELESS(poisson)
 IMPLEMENT_STATELESS(dirichlet_grad)
 IMPLEMENT_STATELESS(bernoulli)
 IMPLEMENT_STATELESS(range)
@@ -760,6 +761,7 @@ static PyMethodDef TorchMethods[] = {
   {"_standard_gamma",  (PyCFunction)THPModule_standard_gamma,    METH_VARARGS | METH_KEYWORDS, NULL},
   {"_dirichlet_grad", (PyCFunction)THPModule_dirichlet_grad,    METH_VARARGS | METH_KEYWORDS, NULL},
   {"bernoulli",       (PyCFunction)THPModule_bernoulli,         METH_VARARGS | METH_KEYWORDS, NULL},
+  {"poisson",         (PyCFunction)THPModule_poisson,           METH_VARARGS | METH_KEYWORDS, NULL},
   {"rand",            (PyCFunction)THPModule_rand,              METH_VARARGS | METH_KEYWORDS, NULL},
   {"randn",           (PyCFunction)THPModule_randn,             METH_VARARGS | METH_KEYWORDS, NULL},
   {"randperm",        (PyCFunction)THPModule_randperm,          METH_VARARGS | METH_KEYWORDS, NULL},

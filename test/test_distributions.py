@@ -33,7 +33,7 @@ from torch.autograd import Variable, grad, gradcheck
 from torch.distributions import (Bernoulli, Beta, Categorical, Cauchy, Chi2,
                                  Dirichlet, Exponential, Gamma, Gumbel, Laplace,
                                  Normal, OneHotCategorical, Multinomial, Pareto,
-                                 StudentT, Uniform, kl_divergence)
+                                 Poisson, StudentT, Uniform, kl_divergence)
 from torch.distributions.dirichlet import _Dirichlet_backward
 from torch.distributions.constraints import Constraint, is_dependent
 from torch.distributions.utils import _finfo
@@ -159,6 +159,17 @@ EXAMPLES = [
         {
             'scale': torch.Tensor([1.0]),
             'alpha': 1.0
+        }
+    ]),
+    Example(Poisson, [
+        {
+            '_lambda': Variable(torch.randn(5, 5).exp(), requires_grad=True),
+        },
+        {
+            '_lambda': Variable(torch.randn(3).abs(), requires_grad=True),
+        },
+        {
+            '_lambda': 0.2,
         }
     ]),
     Example(Uniform, [
@@ -417,6 +428,38 @@ class TestDistributions(TestCase):
             ([[0.1, 0.9], [0.3, 0.7]], [[[1, 0], [1, 0]], [[0, 1], [0, 1]]]),
         ]
         self._check_enumerate_support(OneHotCategorical, examples)
+
+    def test_poisson_shape(self):
+        _lambda = Variable(torch.randn(2, 3).abs(), requires_grad=True)
+        _lambda_1d = Variable(torch.randn(1).abs(), requires_grad=True)
+        self.assertEqual(Poisson(_lambda).sample().size(), (2, 3))
+        self.assertEqual(Poisson(_lambda).sample_n(7).size(), (7, 2, 3))
+        self.assertEqual(Poisson(_lambda_1d).sample().size(), (1,))
+        self.assertEqual(Poisson(_lambda_1d).sample_n(1).size(), (1, 1))
+        self.assertEqual(Poisson(2.0).sample_n(2).size(), (2,))
+
+    @unittest.skipIf(not TEST_NUMPY, "Numpy not found")
+    def test_poisson_log_prob(self):
+        _lambda = Variable(torch.exp(torch.randn(2, 3)), requires_grad=True)
+        _lambda_1d = Variable(torch.randn(1).abs(), requires_grad=True)
+
+        def ref_log_prob(idx, x, log_prob):
+            l = _lambda.data.view(-1)[idx]
+            expected = scipy.stats.poisson.logpdf(x, a, l)
+            self.assertAlmostEqual(log_prob, expected, places=3)
+
+        set_rng_seed(0)
+        self._check_log_prob(Poisson(_lambda), ref_log_prob)
+        self._gradcheck_log_prob(Poisson, (_lambda,))
+        self._gradcheck_log_prob(Poisson, (_lambda_1d,))
+
+    @unittest.skipIf(not TEST_NUMPY, "Numpy not found")
+    def test_poisson_sample(self):
+        set_rng_seed(0)  # see Note [Randomized statistical tests]
+        for _lambda in [0.1, 1.0, 5.0]:
+            self._check_sampler_sampler(Poisson(_lambda),
+                                        scipy.stats.poisson(_lambda),
+                                        'Poisson(lambda={})'.format(_lambda))
 
     def test_uniform(self):
         low = Variable(torch.zeros(5, 5), requires_grad=True)
