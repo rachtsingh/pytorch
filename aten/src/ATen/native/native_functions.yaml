@@ -298,7 +298,7 @@
     CPU: _standard_gamma_grad_cpu
     CUDA: _standard_gamma_grad_cuda
 
-- func: poisson(Tensor self, Generator* generator=nullptr) -> Tensor
+- func: _poisson(Tensor self, Generator* generator=nullptr) -> Tensor
   variants: function
   dispatch:
     CPU: _s_poisson_cpu

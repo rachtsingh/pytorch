@@ -9,8 +9,8 @@ from torch.distributions.utils import broadcast_all
 
 def _poisson(rate):
     if not isinstance(rate, Variable):
-        return torch.poisson(Variable(rate)).data
-    return torch.poisson(rate)
+        rate = Variable(rate)
+    return Variable._poisson(rate)
 
 
 class Poisson(Distribution):

@@ -26,6 +26,7 @@ import math
 import unittest
 from collections import namedtuple
 from itertools import product
+from random import shuffle
 
 import torch
 from common import TestCase, run_tests, set_rng_seed
@@ -45,6 +46,8 @@ try:
     import scipy.special
 except ImportError:
     TEST_NUMPY = False
+
+TEST_CUDA = torch.cuda.is_available()
 
 
 # Register all distributions for generic tests.
@@ -163,10 +166,10 @@ EXAMPLES = [
     ]),
     Example(Poisson, [
         {
-            'rate': Variable(torch.randn(5, 5), requires_grad=True),
+            'rate': Variable(torch.randn(5, 5).abs(), requires_grad=True),
         },
         {
-            'rate': Variable(torch.randn(3), requires_grad=True),
+            'rate': Variable(torch.randn(3).abs(), requires_grad=True),
         },
         {
             'rate': 0.2,
@@ -232,7 +235,8 @@ class TestDistributions(TestCase):
             axis /= np.linalg.norm(axis)
             torch_samples = np.dot(torch_samples, axis)
             ref_samples = np.dot(ref_samples, axis)
-        samples = [(x, +1) for x in torch_samples] + [(x, -1) for x in ref_samples]
+	samples = [(x, +1) for x in torch_samples] + [(x, -1) for x in ref_samples]
+        shuffle(samples) # necessary to prevent stable sort from making uneven bins for discrete
         samples.sort()
         samples = np.array(samples)[:, 1]
 
@@ -440,12 +444,12 @@ class TestDistributions(TestCase):
 
     @unittest.skipIf(not TEST_NUMPY, "Numpy not found")
     def test_poisson_log_prob(self):
-        rate = Variable(torch.exp(torch.randn(2, 3)), requires_grad=True)
+        rate = Variable(torch.abs(torch.randn(2, 3)), requires_grad=True)
         rate_1d = Variable(torch.randn(1).abs(), requires_grad=True)
 
         def ref_log_prob(idx, x, log_prob):
             l = rate.data.view(-1)[idx]
-            expected = scipy.stats.poisson.logpdf(x, a, l)
+            expected = scipy.stats.poisson.logpmf(x, l)
             self.assertAlmostEqual(log_prob, expected, places=3)
 
         set_rng_seed(0)
@@ -460,6 +464,15 @@ class TestDistributions(TestCase):
             self._check_sampler_sampler(Poisson(rate),
                                         scipy.stats.poisson(rate),
                                         'Poisson(lambda={})'.format(rate))
+
+    @unittest.skipIf(not TEST_CUDA, "CUDA not found")
+    @unittest.skipIf(not TEST_NUMPY, "Numpy not found")
+    def test_poisson_gpu_sample(self):
+        set_rng_seed(0)
+        for rate in [0.12, 0.9, 4.0]:
+            self._check_sampler_sampler(Poisson(torch.Tensor([rate]).cuda()),
+                                        scipy.stats.poisson(rate),
+                                        'Poisson(lambda={}, cuda)'.format(rate))
 
     def test_uniform(self):
         low = Variable(torch.zeros(5, 5), requires_grad=True)
