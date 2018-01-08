@@ -46,6 +46,8 @@ try:
 except ImportError:
     TEST_NUMPY = False
 
+TEST_CUDA = torch.cuda.is_available()
+
 
 # Register all distributions for generic tests.
 Example = namedtuple('Example', ['Dist', 'params'])
@@ -379,6 +381,14 @@ class TestDistributions(TestCase):
             self._check_sampler_sampler(Poisson(rate),
                                         scipy.stats.poisson(rate),
                                         'Poisson(lambda={})'.format(rate))
+
+    @unittest.skipIf(not TEST_CUDA, "CUDA not found")
+    def test_poisson_gpu_sample(self):
+        set_rng_seed(0)
+        for rate in [0.12, 0.9, 10.0]:
+            self._check_sampler_sampler(Poisson(torch.Tensor([rate]).cuda()),
+                                        scipy.stats.poisson(rate),
+                                        'Poisson(lambda={}, cuda)'.format(rate))
 
     def test_uniform(self):
         low = Variable(torch.zeros(5, 5), requires_grad=True)
