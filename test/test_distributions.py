@@ -235,7 +235,7 @@ class TestDistributions(TestCase):
             axis /= np.linalg.norm(axis)
             torch_samples = np.dot(torch_samples, axis)
             ref_samples = np.dot(ref_samples, axis)
-	samples = [(x, +1) for x in torch_samples] + [(x, -1) for x in ref_samples]
+        samples = [(x, +1) for x in torch_samples] + [(x, -1) for x in ref_samples]
         shuffle(samples) # necessary to prevent stable sort from making uneven bins for discrete
         samples.sort()
         samples = np.array(samples)[:, 1]
