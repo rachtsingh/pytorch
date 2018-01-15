@@ -41,6 +41,7 @@ void THCRandom_init(THCState* state, int devices, int current_device)
   {
     rng_state->gen[i].initf = 0;
     rng_state->gen[i].initial_seed = createSeed(rd);
+    rng_state->gen[i].philox_seed_offset = 0;
     rng_state->gen[i].gen_states = NULL;
     rng_state->gen[i].kernel_params = NULL;
   }

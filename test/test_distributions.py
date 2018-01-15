@@ -228,7 +228,7 @@ class TestDistributions(TestCase):
         if isinstance(torch_samples, Variable):
             torch_samples = torch_samples.data
         torch_samples = torch_samples.cpu().numpy()
-        ref_samples = ref_dist.rvs(num_samples)
+        ref_samples = ref_dist.rvs(num_samples).astype(np.float64)
         if multivariate:
             # Project onto a random axis.
             axis = np.random.normal(size=torch_samples.shape[-1])
@@ -237,7 +237,7 @@ class TestDistributions(TestCase):
             ref_samples = np.dot(ref_samples, axis)
         samples = [(x, +1) for x in torch_samples] + [(x, -1) for x in ref_samples]
         shuffle(samples) # necessary to prevent stable sort from making uneven bins for discrete
-        samples.sort()
+        samples.sort(key=lambda x: x[0])
         samples = np.array(samples)[:, 1]
 
         # Aggragate into bins filled with roughly zero-mean unit-variance RVs.
@@ -444,7 +444,7 @@ class TestDistributions(TestCase):
 
     @unittest.skipIf(not TEST_NUMPY, "Numpy not found")
     def test_poisson_log_prob(self):
-        rate = Variable(torch.abs(torch.randn(2, 3)), requires_grad=True)
+        rate = Variable(torch.randn(2, 3).abs(), requires_grad=True)
         rate_1d = Variable(torch.randn(1).abs(), requires_grad=True)
 
         def ref_log_prob(idx, x, log_prob):
@@ -463,7 +463,8 @@ class TestDistributions(TestCase):
         for rate in [0.1, 1.0, 5.0]:
             self._check_sampler_sampler(Poisson(rate),
                                         scipy.stats.poisson(rate),
-                                        'Poisson(lambda={})'.format(rate))
+                                        'Poisson(lambda={})'.format(rate),
+                                        failure_rate=1e-4)
 
     @unittest.skipIf(not TEST_CUDA, "CUDA not found")
     @unittest.skipIf(not TEST_NUMPY, "Numpy not found")
@@ -472,7 +473,8 @@ class TestDistributions(TestCase):
         for rate in [0.12, 0.9, 4.0]:
             self._check_sampler_sampler(Poisson(torch.Tensor([rate]).cuda()),
                                         scipy.stats.poisson(rate),
-                                        'Poisson(lambda={}, cuda)'.format(rate))
+                                        'Poisson(lambda={}, cuda)'.format(rate),
+                                        failure_rate=1e-4)
 
     def test_uniform(self):
         low = Variable(torch.zeros(5, 5), requires_grad=True)

@@ -45,7 +45,7 @@ __host__ void THCRandom_getRNGState(THCState* state, THByteTensor *rng_state)
 
   // The RNG state comprises the MTPG32 states and the seed.
   static const size_t states_size = MAX_NUM_BLOCKS * sizeof(curandStateMtgp32);
-  static const size_t seed_size = sizeof(gen->initial_seed);
+  static const size_t seed_size = sizeof(gen->initial_seed) + sizeof(gen->philox_seed_offset);
   static const size_t total_size = states_size + seed_size;
   THByteTensor_resize1d(rng_state, total_size);
   THArgCheck(THByteTensor_nElement(rng_state) == total_size, 1, "RNG state is wrong size");
@@ -65,7 +65,7 @@ __host__ void THCRandom_setRNGState(THCState* state, THByteTensor *rng_state)
   THCGenerator* gen = THCRandom_getGenerator(state);
 
   static const size_t states_size = MAX_NUM_BLOCKS * sizeof(curandStateMtgp32);
-  static const size_t seed_size = sizeof(gen->initial_seed);
+  static const size_t seed_size = sizeof(gen->initial_seed) + sizeof(gen->philox_seed_offset);
   static const size_t total_size = states_size + seed_size;
   THArgCheck(THByteTensor_nElement(rng_state) == total_size, 1, "RNG state is wrong size");
   THArgCheck(THByteTensor_isContiguous(rng_state), 1, "RNG state must be contiguous");

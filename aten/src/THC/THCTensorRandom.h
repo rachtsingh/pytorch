@@ -12,6 +12,7 @@ typedef struct _Generator {
   struct mtgp32_kernel_params *kernel_params;
   int initf;
   uint64_t initial_seed;
+  uint64_t philox_seed_offset;
 } THCGenerator;
 
 typedef struct THCRNGState {
