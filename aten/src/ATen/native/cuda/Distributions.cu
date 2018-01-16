@@ -4,7 +4,7 @@
 #include <curand.h>
 #include <curand_kernel.h>
 #include <curand_philox4x32_x.h>
-#include <thrust/functional.h>
+#include <utility>
 
 #include <THC/THCGeneral.h>
 #include <THC/THCHalf.h>
@@ -18,9 +18,9 @@ namespace at {
 namespace native {
 
 namespace dist {
-  thrust::pair<uint64_t, uint64_t> get_philox_seed(Generator *gen) {
+  std::pair<uint64_t, uint64_t> get_philox_seed(Generator *gen) {
     auto gen_ = THCRandom_getGenerator(at::globalContext().thc_state);
-    return thrust::make_pair(gen_->initial_seed, gen_->philox_seed_offset++);
+    return std::make_pair(gen_->initial_seed, gen_->philox_seed_offset++);
   }
 
   // note that sample_poisson is adapted from Numpy's distributions.c
@@ -80,7 +80,7 @@ namespace dist {
   
   template <typename scalar>
   struct PoissonOpCUDA {
-    static void apply(Tensor& ret, const Tensor& lambda, thrust::pair<uint64_t, uint64_t> seeds) {
+    static void apply(Tensor& ret, const Tensor& lambda, std::pair<uint64_t, uint64_t> seeds) {
       at::cuda::CUDA_tensor_apply2<scalar, float>(ret, lambda,
         [seeds] __device__ (scalar& ret_val, const float& lambda, bool early_exit) {
           curandStatePhilox4_32_10_t state;

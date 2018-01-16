@@ -43,16 +43,18 @@ __host__ void THCRandom_getRNGState(THCState* state, THByteTensor *rng_state)
 {
   THCGenerator* gen = THCRandom_getGenerator(state);
 
-  // The RNG state comprises the MTPG32 states and the seed.
+  // The RNG state comprises the MTPG32 states, the seed, and an offset used for Philox
   static const size_t states_size = MAX_NUM_BLOCKS * sizeof(curandStateMtgp32);
-  static const size_t seed_size = sizeof(gen->initial_seed) + sizeof(gen->philox_seed_offset);
-  static const size_t total_size = states_size + seed_size;
+  static const size_t seed_size = sizeof(gen->initial_seed);
+  static const size_t offset_size = sizeof(gen->philox_seed_offset);
+  static const size_t total_size = states_size + seed_size + offset_size;
   THByteTensor_resize1d(rng_state, total_size);
   THArgCheck(THByteTensor_nElement(rng_state) == total_size, 1, "RNG state is wrong size");
   THArgCheck(THByteTensor_isContiguous(rng_state), 1, "RNG state must be contiguous");
   THCudaCheck(cudaMemcpy(THByteTensor_data(rng_state), gen->gen_states,
                          states_size, cudaMemcpyDeviceToHost));
   memcpy(THByteTensor_data(rng_state) + states_size, &gen->initial_seed, seed_size);
+  memcpy(THByteTensor_data(rng_state) + states_size + seed_size, &gen->philox_seed_offset, offset_size);
 }
 
 __global__ void set_rngstate_kernel(curandStateMtgp32 *state, mtgp32_kernel_params *kernel)
@@ -65,9 +67,16 @@ __host__ void THCRandom_setRNGState(THCState* state, THByteTensor *rng_state)
   THCGenerator* gen = THCRandom_getGenerator(state);
 
   static const size_t states_size = MAX_NUM_BLOCKS * sizeof(curandStateMtgp32);
-  static const size_t seed_size = sizeof(gen->initial_seed) + sizeof(gen->philox_seed_offset);
-  static const size_t total_size = states_size + seed_size;
-  THArgCheck(THByteTensor_nElement(rng_state) == total_size, 1, "RNG state is wrong size");
+  static const size_t seed_size = sizeof(gen->initial_seed);
+  static const size_t offset_size = sizeof(gen->philox_seed_offset);
+  static const size_t total_size = states_size + seed_size + offset_size;
+  bool deprecated = false;
+  if (THByteTensor_nElement(rng_state) == total_size - offset_size) {
+    deprecated = true; 
+  }
+  else {
+    THArgCheck(THByteTensor_nElement(rng_state) == total_size, 1, "RNG state is wrong size");
+  } 
   THArgCheck(THByteTensor_isContiguous(rng_state), 1, "RNG state must be contiguous");
 
   THCudaCheck(cudaMemcpy(gen->gen_states, THByteTensor_data(rng_state),
@@ -75,6 +84,12 @@ __host__ void THCRandom_setRNGState(THCState* state, THByteTensor *rng_state)
   set_rngstate_kernel<<<1, MAX_NUM_BLOCKS, 0, THCState_getCurrentStream(state)>>>(
       gen->gen_states, gen->kernel_params);
   memcpy(&gen->initial_seed, THByteTensor_data(rng_state) + states_size, seed_size);
+  if (!deprecated) {
+    memcpy(&gen->philox_seed_offset, THByteTensor_data(rng_state) + states_size + seed_size, offset_size);
+  }
+  else {
+    gen->philox_seed_offset = 0;
+  }
 }
 
 // Goes from (0, 1] to [0, 1). Note 1-x is not sufficient since for some floats

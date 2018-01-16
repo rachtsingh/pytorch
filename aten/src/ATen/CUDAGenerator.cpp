@@ -19,7 +19,6 @@ CUDAGenerator::CUDAGenerator(Context * context_)
 {
   // there's no reason to call THCRandom_init, because it is called
   // during THCudaInit, which is called before this initializer
-  // THCRandom_init(context->thc_state, num_devices, current_device);
   generator = THCRandom_getGenerator(context->thc_state);
 }
 
