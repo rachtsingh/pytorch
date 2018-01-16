@@ -392,6 +392,12 @@
     CPU: _s_poisson_cpu
     CUDA: _s_poisson_cuda
 
+- func: standard_gamma(Tensor self, Generator* generator=nullptr) -> Tensor
+  variants: function
+  dispatch:
+    CPU: _s_gamma_cpu
+    CUDA: _s_gamma_cuda
+
 - func: _cudnn_rnn_flatten_weight(TensorList weight_arr, int64_t weight_stride0, int64_t input_size, int64_t mode, int64_t hidden_size, int64_t num_layers, bool batch_first, bool bidirectional) -> Tensor
   variants: function
 
