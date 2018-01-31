@@ -1,5 +1,8 @@
+#include "ATen/ATen.h"
+#include "ATen/TensorUtils.h"
 #include "ATen/NativeFunctions.h"
 #include "ATen/Dispatch.h"
+#include "ATen/Config.h"
 #include "ATen/cuda/CUDAApplyUtils.cuh"
 #include <curand.h>
 #include <curand_kernel.h>
@@ -8,7 +11,8 @@
 #include <functional>
 #include <nvfunctional>
 
-#include "ATen/native/Distributions.cuh"
+#include "ATen/SharedDist.cu"
+#include "ATen/native/Distributions.cpp"
 
 #include <TH/THAtomic.h>
 
