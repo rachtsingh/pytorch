@@ -128,11 +128,11 @@ def _x_log_x(tensor):
 
 def kl_divergence(p, q):
     r"""
-    Compute Kullback-Leibler divergence :math:`KL(p \| q)` between two distributions.
+    Compute Kullback-Leibler divergence :math:`\operatorname{KL}(p \| q)` between two distributions.
 
     .. math::
 
-        KL(p \| q) = \int p(x) \log\frac {p(x)} {q(x)} \,dx
+        \operatorname{KL}(p \| q) = \int p(x) \log\frac {p(x)} {q(x)} \,dx
 
     Args:
         p (Distribution): A :class:`~torch.distributions.Distribution` object.
