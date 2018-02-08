@@ -7,6 +7,7 @@ Probability distributions - torch.distributions
 .. automodule:: torch.distributions
 .. currentmodule:: torch.distributions
 
+
 :hidden:`Distribution`
 ~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -145,7 +146,7 @@ Probability distributions - torch.distributions
 .. autoclass:: Uniform
     :members:
 
-`KL Divergence`
+KL Divergence
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 .. automodule:: torch.distributions.kl
@@ -154,21 +155,21 @@ Probability distributions - torch.distributions
 .. autofunction:: kl_divergence
 .. autofunction:: register_kl
 
-`Transforms`
+Transforms
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 .. automodule:: torch.distributions.transforms
     :members:
     :member-order: bysource
 
-`Constraints`
+Constraints
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 .. automodule:: torch.distributions.constraints
     :members:
     :member-order: bysource
 
-`Constraint Registry`
+Constraint Registry
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 .. automodule:: torch.distributions.constraint_registry
